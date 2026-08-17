@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.example.codomon-person</string>
+
+    <!--
+      顔認識の結果を人物アルバムへ反映し、未アップロード分をみてねへ送るジョブ。
+      コドモンへのアクセスは行わず、ローカルの写真ライブラリだけを見る（3〜4秒）。
+
+      なぜ本体(17:30)と分けるか:
+        写真.appの顔解析は取り込み直後には終わらず、Macがアイドル時に進む。
+        実測では最短50分・多くは数時間かかる。本体の実行に紐づけると、
+        深夜に解析が終わっても翌日17:30まで反映されない。
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <!--
+          macOS 26.6.1 へのアップデート後、launchd が venv の python を直接
+          起動できなくなった（EX_CONFIG=78）。uv 製 python は ad-hoc 署名で、
+          launchd の Lightweight Code Requirement に弾かれるため。
+          Apple 署名の /usr/bin/env を噛ませると起動できる。
+        -->
+        <string>/usr/bin/env</string>
+        <string>/PATH/TO/codomon-photo-sync/.venv/bin/python3</string>
+        <string>/PATH/TO/codomon-photo-sync/run_person_tasks.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/PATH/TO/codomon-photo-sync</string>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>0</integer></dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/PATH/TO/codomon-photo-sync/launchd.person-album.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/PATH/TO/codomon-photo-sync/launchd.person-album.err.log</string>
+</dict>
+</plist>

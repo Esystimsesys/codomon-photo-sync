@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.example.codomon-sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!--
+          macOS 26.6.1 へのアップデート後、launchd が venv の python を直接
+          起動できなくなった（EX_CONFIG=78）。uv 製 python は ad-hoc 署名で、
+          launchd の Lightweight Code Requirement に弾かれるため。
+          Apple 署名の /usr/bin/env を噛ませると起動できる。
+        -->
+        <string>/usr/bin/env</string>
+        <string>/PATH/TO/codomon-photo-sync/.venv/bin/python3</string>
+        <string>/PATH/TO/codomon-photo-sync/sync_photos.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/PATH/TO/codomon-photo-sync</string>
+
+    <!-- 毎日 17:30 に実行（園の写真投稿は99%が16:38までに完了）。Mac がスリープ中は次回起動時にまとめて実行される -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>17</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/PATH/TO/codomon-photo-sync/launchd.photo-sync.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/PATH/TO/codomon-photo-sync/launchd.photo-sync.err.log</string>
+</dict>
+</plist>
