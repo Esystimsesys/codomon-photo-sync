@@ -1,0 +1,34 @@
+# セッションCookie（パスワード同等）— 絶対にコミットしない
+storage_state.json
+mitene_state.json
+
+# 個人情報が写り込む可能性のあるデバッグ出力
+login_failed.png
+*.log
+# ローテーション後（sync.log.1 など）
+*.log.*
+
+# 調査ノート（内部API仕様・障害の経緯など。公開しない）
+notes/
+
+# 個人設定（子どもの名前など）
+config.json
+
+# 実環境用のlaunchd定義（ユーザー名・絶対パスを含む）
+# 公開するのは *.plist.template のみ
+*.plist
+!*.plist.template
+
+# 実行時に生成される状態ファイル（子どもの実名を含むファイル名の一覧）
+mitene_uploaded.json
+photos_skip.json
+.last_session_refresh
+.job.lock
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store

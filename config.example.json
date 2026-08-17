@@ -1,0 +1,21 @@
+{
+  "_comment": "config.json にコピーして自分の環境に合わせて編集してください。config.json は .gitignore 済みです。",
+
+  "person": "子どもの名前",
+  "_person": "写真.appのピープルで付けた名前。この人物が写った写真だけを抽出・アップロードします。",
+
+  "album": "コドモン",
+  "_album": "写真.appに作る全写真用アルバムの名前。",
+
+  "person_album": null,
+  "_person_album": "人物別アルバムの名前。null なら「<album>（<person>）」が使われます。",
+
+  "save_root": "~/Pictures/codomon",
+  "_save_root": "写真と記録の保存先。",
+
+  "days_to_check": 30,
+  "_days_to_check": "毎回さかのぼる日数。環境変数 CODOMON_DAYS で一時的に上書きできます。",
+
+  "mitene_scope": "家族みんなに公開",
+  "_mitene_scope": "みてねの公開範囲ボタンの表示名。検証時は「管理者のみ」を指定します。"
+}
