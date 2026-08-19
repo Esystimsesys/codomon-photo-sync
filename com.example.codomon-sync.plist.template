@@ -22,13 +22,15 @@
     <string>/PATH/TO/codomon-photo-sync</string>
 
     <!-- 毎日 17:30 に実行（園の写真投稿は99%が16:38までに完了）。Mac がスリープ中は次回起動時にまとめて実行される -->
+    <!--
+      17:30 は写真付き投稿の99%が16:38までに完了する実測に基づく。
+      21:00 は夕方以降に投稿された分を当日中に拾うための保険。
+    -->
     <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>17</integer>
-        <key>Minute</key>
-        <integer>30</integer>
-    </dict>
+    <array>
+        <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
+    </array>
 
     <key>StandardOutPath</key>
     <string>/PATH/TO/codomon-photo-sync/launchd.photo-sync.out.log</string>

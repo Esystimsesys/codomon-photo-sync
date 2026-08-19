@@ -15,7 +15,7 @@
 7. 顔認識で指定した人物と識別された写真を人物別アルバムへ反映（[04-face-recognition.md](04-face-recognition.md)）
 8. 未アップロード分をみてねへ送信（[05-mitene.md](05-mitene.md)）
 
-launchd により毎日17:30に自動実行される。iCloud写真が有効なら、アルバムは iPhone/iPad からも見られる。
+launchd により毎日17:30と21:00に自動実行される。iCloud写真が有効なら、アルバムは iPhone/iPad からも見られる。
 
 写真.appへの取り込みを止めたい場合は `CODOMON_NO_PHOTOS=1` を指定する。
 
