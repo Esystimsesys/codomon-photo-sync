@@ -53,7 +53,8 @@ iCloud共有アルバムでは「投稿するとファイル名も日時も変�
 ### 運用コマンド
 
 ```bash
-.venv/bin/python3 mitene_upload.py --login    # 手動ログイン（初回・失効時）
+python3 setup.py mitene                       # 初回設定・再ログイン（--login と --seed をまとめて案内する）
+.venv/bin/python3 mitene_upload.py --login    # 手動ログインだけを行う
 .venv/bin/python3 mitene_upload.py --seed     # 現状を「対応済み」として記録（送信しない）
 .venv/bin/python3 mitene_upload.py --dry-run  # 対象を数えるだけ
 .venv/bin/python3 mitene_upload.py            # 未アップロード分を送信
@@ -83,13 +84,13 @@ iCloud共有アルバムでは「投稿するとファイル名も日時も変�
 
 ```text
 みてね: セッションが失効しています。N 枚が未送信です。次を実行して再ログインしてください:
-cd ~/Documents/Development/codomon-photo-sync && .venv/bin/python3 mitene_upload.py --login
+cd <このリポジトリ> && python3 setup.py mitene
 ```
 
 **この1コマンドを実行するだけでよい。**
 
 ```bash
-cd ~/Documents/Development/codomon-photo-sync && .venv/bin/python3 mitene_upload.py --login
+cd <このリポジトリ> && python3 setup.py mitene
 ```
 
 ブラウザが開くので、メールアドレス・パスワードを入力し、**ワンタイムパスワード（OTP）まで完了**させる。アルバム画面に到達するとセッションが保存され、次の定期実行から自動的に再開される。未送信分は台帳に残っているので取りこぼさない。

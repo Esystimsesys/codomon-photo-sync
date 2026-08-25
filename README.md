@@ -38,43 +38,77 @@
 ## セットアップ
 
 ```bash
-git clone <このリポジトリ>
+git clone https://github.com/Esystimsesys/codomon-photo-sync.git
 cd codomon-photo-sync
-
-# 1. 依存関係
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/playwright install chromium
-
-# 2. 設定（子どもの名前・アルバム名など）
-cp config.example.json config.json
-$EDITOR config.json
-
-# 3. コドモンの認証情報を Keychain に登録
-#    値は入力せず、対話プロンプトで打つ（シェル履歴に残さないため）
-security add-generic-password -a "$USER" -s codomon-photo-sync-user -w
-security add-generic-password -a "$USER" -s codomon-photo-sync-pass -w
-
-# 4. 動作確認
-.venv/bin/python3 sync_photos.py
+python3 setup.py
 ```
 
-顔認識を使う場合は、**フルディスクアクセス**の付与が必要です（写真.app のライブラリDBを読むため）。システム設定 → プライバシーとセキュリティ → フルディスクアクセス で、実行元のターミナルを許可してください。
+対話形式で、仮想環境の作成・依存パッケージの導入・設定・コドモンの認証情報の登録・
+定期実行の登録までを行います。**設定ファイルを手で書き換える必要はありません。**
 
-みてね連携の初期設定と定期実行の登録は [運用ドキュメント](docs/03-operations.md) を参照してください。
+認証情報は入力しても画面に表示されず、シェルの履歴にも残りません。macOS の
+Keychain に保存され、リポジトリにも設定ファイルにも書かれません（[セキュリティ](docs/02-security.md)）。
+
+うまくいかないときは、まず状態を確認してください。足りないものと直し方が出ます。
+
+```bash
+python3 setup.py doctor
+```
+
+```text
+✓ macOS 26.6.1
+✓ Python 3.13.2
+✓ 仮想環境と依存パッケージ
+✗ フルディスクアクセスがありません
+   システム設定 → プライバシーとセキュリティ → フルディスクアクセス で
+   実行元（ターミナル / VS Code など）を許可してください
+```
+
+### 段階的に使えます
+
+全部を一度に設定する必要はありません。**段階1 だけでも十分に役に立ちます。**
+
+| | できること | 必要なもの |
+| --- | --- | --- |
+| **段階1** | 写真・記録・添付をローカルへ自動保存 | コドモンのアカウントだけ |
+| **段階2** | 写真.app のアルバムへ自動取り込み（iPhone からも見られる） | iCloud 写真（任意） |
+| **段階3** | 顔認識で子どもだけを抽出し、みてねへ自動送信 | フルディスクアクセス、みてねプレミアム |
+
+段階1・2 は `setup.py` を実行した時点で有効です。
+
+**段階3 を使うには**、先に写真.app の「ピープル」で子どもの顔に名前を付け、
+その名前を設定の `person` に入れてください（`setup.py` が尋ねます）。空のままなら
+顔認識は動かず、エラーにもなりません。みてね連携はあとから追加できます。
+
+```bash
+python3 setup.py mitene
+```
+
+### そのほかの操作
+
+```bash
+python3 setup.py            # メニューを出す
+python3 setup.py schedule   # 定期実行を登録し直す（時刻を変えたとき）
+python3 setup.py uninstall  # 定期実行の解除と生成物の削除
+```
+
+`uninstall` は**何を消すかを個別に尋ねます**。取得した写真は既定で残します
+（コドモンから消えた古い投稿は、消すと二度と取得できないため）。
 
 ## 設定
 
-`config.json` に個人に紐づく値をまとめています（Git 管理外）。
+`config.json` に個人に紐づく値をまとめています（Git 管理外）。`setup.py` が作るので、
+手で書く必要はありません。あとから変えたいときだけ直接編集してください。
 
 | キー | 内容 |
 | --- | --- |
-| `person` | 写真.app のピープルで付けた名前。この人物の写真だけを抽出する |
+| `person` | 写真.app のピープルで付けた名前。この人物の写真だけを抽出する（空なら顔認識を使わない） |
 | `album` | 写真.app に作る全写真用アルバムの名前 |
 | `person_album` | 人物別アルバムの名前（省略時は「アルバム名（人物名）」） |
 | `save_root` | 写真と記録の保存先 |
 | `days_to_check` | 毎回さかのぼる日数 |
 | `mitene_scope` | みてねの公開範囲ボタンの表示名 |
+| `job_labels` | 死活監視の対象。`setup.py` が書くので触らない |
 
 ## 保存されるもの
 
@@ -95,9 +129,9 @@ launchd で 3 つのジョブを動かします。
 
 | ジョブ | 時刻 | 処理 |
 | --- | --- | --- |
-| `codomon-sync` | 17:30 / 21:00 | コドモンから取得 → 写真.app へ取り込み |
-| `codomon-person` | 7:00 / 13:00 / 19:00 / 22:00 | 顔認識の反映 → みてねへアップロード |
-| `codomon-healthcheck` | 8:00 / 23:00 | 上 2 つが止まっていないか確認し、異常なら通知 |
+| `com.codomon-photo-sync.sync` | 17:30 / 21:00 | コドモンから取得 → 写真.app へ取り込み |
+| `com.codomon-photo-sync.person` | 7:00 / 13:00 / 19:00 / 22:00 | 顔認識の反映 → みてねへアップロード |
+| `com.codomon-photo-sync.healthcheck` | 8:00 / 23:00 | 上 2 つが止まっていないか確認し、異常なら通知 |
 
 取得を1日2回にしているのは、夕方以降に投稿された分を当日中に拾うためです。2つのジョブは排他ロックを共有するため、同時刻に重ならないよう時刻をずらしています。
 
@@ -118,6 +152,7 @@ launchd で 3 つのジョブを動かします。
 
 | ファイル | 役割 |
 | --- | --- |
+| `setup.py` | 導入・設定・撤去。これだけシステムの python3 で動く |
 | `sync_photos.py` | 本体。取得・記録保存・写真.app 取り込み |
 | `export_person.py` | 顔認識で人物別アルバムを生成 |
 | `mitene_upload.py` | みてねへ未アップロード分を送信 |

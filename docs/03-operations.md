@@ -3,39 +3,85 @@
 ## セットアップ
 
 ```bash
-cd ~/Documents/Development/codomon-photo-sync
-
-# 1. 仮想環境
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/playwright install chromium
-
-# 2. 認証情報をKeychainに登録（値は入力せず対話プロンプトで打つ）
-security add-generic-password -a "$USER" -s codomon-photo-sync-user -w
-security add-generic-password -a "$USER" -s codomon-photo-sync-pass -w
-
-# 3. 動作確認
-.venv/bin/python3 sync_photos.py
-
-# 4. みてね連携の初期設定（詳細は 05-mitene.md）
-.venv/bin/python3 mitene_upload.py --login   # 手動ログイン＋OTP
-.venv/bin/python3 mitene_upload.py --seed    # 既にアップ済みの分を「対応済み」に
-
-# 5. ログの出力先を作る（詳細は「ログ」の節。プロジェクト配下に置いてはいけない）
-mkdir -p ~/Library/Logs/codomon-photo-sync
-
-# 6. 定期実行を登録（3つとも）
-cp com.example.codomon-sync.plist ~/Library/LaunchAgents/
-cp com.example.codomon-person.plist ~/Library/LaunchAgents/
-cp com.example.codomon-healthcheck.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.example.codomon-sync.plist
-launchctl load ~/Library/LaunchAgents/com.example.codomon-person.plist
-launchctl load ~/Library/LaunchAgents/com.example.codomon-healthcheck.plist
+git clone https://github.com/Esystimsesys/codomon-photo-sync.git
+cd codomon-photo-sync
+python3 setup.py
 ```
+
+`setup.py` が以下をまとめて行う。**このスクリプトだけはシステムの python3 で動く**
+（仮想環境を作る側なので、仮想環境に依存できない。標準ライブラリしか使わないこと）。
+
+1. macOS と Python のバージョン確認
+2. 仮想環境の作成、依存パッケージと Chromium の導入
+3. `config.json` の作成（対話）
+4. コドモンの認証情報を Keychain へ登録（値は画面に出ず、シェル履歴にも残らない）
+5. フルディスクアクセスの確認
+6. ログ出力先の作成と、launchd への定期実行の登録
 
 初回の launchd 実行時に Keychain アクセス許可ダイアログが出たら**「常に許可」**を選ぶ。
 
-**フルディスクアクセスの付与が必要。** 顔認識は写真.appのライブラリDBを読むため、システム設定 → プライバシーとセキュリティ → フルディスクアクセス で、実行元（VS Code / ターミナル）を許可しておく（[04-face-recognition.md](04-face-recognition.md)）。
+### サブコマンド
+
+| コマンド | 内容 |
+| --- | --- |
+| `python3 setup.py` | メニューを出す |
+| `python3 setup.py install` | 初期セットアップ。何度実行してもよい |
+| `python3 setup.py doctor` | 前提条件をまとめて確認する |
+| `python3 setup.py mitene` | みてね連携の追加・再ログイン |
+| `python3 setup.py schedule` | 定期実行を登録し直す |
+| `python3 setup.py uninstall` | 定期実行の解除と生成物の削除 |
+
+### plist は生成する（テンプレートを手で書き換えない）
+
+以前は `*.plist.template` を配布し、`/PATH/TO/...` を手で置換させていた。
+3ファイル × 5箇所の置換もれに加え、**`config.json` の `job_labels` と plist の
+`Label` を人が一致させる二重管理**になっていた。ずれると死活監視が
+「ジョブが未登録」と誤検知する。
+
+いまは `setup.py schedule` が実パスで plist を生成し、`~/Library/LaunchAgents/`
+へ直接置いて `job_labels` も同時に書く。ラベルにユーザー名を含めないため、
+生成物に個人情報が入らない。
+
+ラベルを変えた場合の取り残しは、**ラベル名ではなく「実行対象がこのディレクトリか」**
+で検出して取り除く（命名を変えても効く）。
+
+### doctor
+
+足りないものと、その直し方を並べて出す。
+
+```console
+$ python3 setup.py doctor
+環境
+  ✓ macOS 26.6.1
+  ✓ Python 3.13.2
+  ✓ 仮想環境と依存パッケージ
+  ✓ Chromium
+
+設定
+  ✓ config.json
+  ✗ コドモンの認証情報が未登録
+     python3 setup.py install で登録できます
+  ✓ フルディスクアクセス
+```
+
+**フルディスクアクセスは、実際に写真ライブラリのDBを開いて判定する。**
+設定画面の状態は読めないので、目的の操作そのものを試すのが確実。
+
+### 撤去
+
+```bash
+python3 setup.py uninstall
+```
+
+定期実行の解除は必ず行い、そのほかは**個別に尋ねる**。取得した写真は既定で残す
+（コドモンから消えた古い投稿は、消すと二度と取得できない）。写真.app に取り込んだ
+写真とアルバムは対象外（AppleScript ではアルバムから写真を外せないため）。
+
+非対話で使う場合は消す対象を明示する。
+
+```bash
+python3 setup.py uninstall --logs --venv --yes
+```
 
 ## 定期実行
 
@@ -43,17 +89,18 @@ launchctl load ~/Library/LaunchAgents/com.example.codomon-healthcheck.plist
 
 | ジョブ | 時刻 | 処理 | 所要 |
 | --- | --- | --- | --- |
-| `com.example.codomon-sync` | 17:30 / 21:00 | 取得 → 写真.app取り込み → 人物アルバム更新 | 約20秒 |
-| `com.example.codomon-person` | 7:00 / 13:00 / 19:00 / 22:00 | 人物アルバム更新 → みてねへアップロード | 約6秒＋送信時間 |
-| `com.example.codomon-healthcheck` | 8:00 / 23:00 | 上2つが止まっていないか確認し、異常なら通知 | 1秒未満 |
+| `com.codomon-photo-sync.sync` | 17:30 / 21:00 | 取得 → 写真.app取り込み → 人物アルバム更新 | 約20秒 |
+| `com.codomon-photo-sync.person` | 7:00 / 13:00 / 19:00 / 22:00 | 人物アルバム更新 → みてねへアップロード | 約6秒＋送信時間 |
+| `com.codomon-photo-sync.healthcheck` | 8:00 / 23:00 | 上2つが止まっていないか確認し、異常なら通知 | 1秒未満 |
 
 ```bash
-launchctl start com.example.codomon-sync    # 手動キック
+launchctl start com.codomon-photo-sync.sync    # 手動キック
 launchctl list | grep codomon                    # 状態確認（2列目が終了コード）
-launchctl unload ~/Library/LaunchAgents/com.example.codomon-sync.plist  # 停止
+launchctl unload ~/Library/LaunchAgents/com.codomon-photo-sync.sync.plist  # 停止
 ```
 
-実行時刻を変えるには plist の `StartCalendarInterval` を編集し、`unload` → `load` し直す。
+実行時刻を変えるには `setup.py` の `JOBS` を編集し、`python3 setup.py schedule` を実行し直す。
+plist は生成物なので直接編集しない（次回の生成で上書きされる）。
 
 ### なぜ人物アルバムの更新を分けているか
 
