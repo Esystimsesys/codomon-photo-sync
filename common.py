@@ -32,8 +32,10 @@ def load_config() -> dict:
         # 保存先はアルバム名から導出しない（アルバム名は日本語、フォルダは英数）
         "save_root": "~/Pictures/codomon", "days_to_check": 30,
         "mitene_scope": "家族みんなに公開",
-        # 死活監視の対象。launchd のラベルにはユーザー名が入るため設定に逃がす
-        "job_labels": ["com.example.codomon-sync", "com.example.codomon-person"],
+        # 死活監視の対象。setup.py が登録したジョブと一致させる（手で書かない）
+        "job_labels": ["com.codomon-photo-sync.sync",
+                       "com.codomon-photo-sync.person",
+                       "com.codomon-photo-sync.healthcheck"],
     }
     if CONFIG_FILE.exists():
         raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))

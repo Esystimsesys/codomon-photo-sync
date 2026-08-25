@@ -19,6 +19,5 @@
   "mitene_scope": "家族みんなに公開",
   "_mitene_scope": "みてねの公開範囲ボタンの表示名。検証時は「管理者のみ」を指定します。",
 
-  "job_labels": ["com.example.codomon-sync", "com.example.codomon-person"],
-  "_job_labels": "死活監視の対象となる launchd のラベル。plist の Label と揃えてください。"
+  "_job_labels": "死活監視の対象となる launchd のラベル。setup.py が自動で書き込むため、手で書く必要はありません。"
 }

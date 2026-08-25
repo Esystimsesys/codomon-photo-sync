@@ -14,10 +14,9 @@ notes/
 # 個人設定（子どもの名前など）
 config.json
 
-# 実環境用のlaunchd定義（ユーザー名・絶対パスを含む）
-# 公開するのは *.plist.template のみ
+# launchd定義（ユーザー名・絶対パスを含む）。setup.py が
+# ~/Library/LaunchAgents へ直接生成するのでリポジトリには置かない
 *.plist
-!*.plist.template
 
 # 実行時に生成される状態ファイル（子どもの実名を含むファイル名の一覧）
 mitene_uploaded.json
