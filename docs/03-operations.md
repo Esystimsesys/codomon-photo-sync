@@ -8,6 +8,9 @@ cd codomon-photo-sync
 python3 setup.py
 ```
 
+**Python 3.11 以降が前提**。macOS 標準の `python3` は 3.9 なので、`brew install python@3.13`
+などで別途用意する（利用者向けの手順は [README](../README.md#セットアップ) にある）。
+
 `setup.py` が以下をまとめて行う。**このスクリプトだけはシステムの python3 で動く**
 （仮想環境を作る側なので、仮想環境に依存できない。標準ライブラリしか使わないこと）。
 
