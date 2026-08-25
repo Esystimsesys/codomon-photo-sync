@@ -275,7 +275,11 @@ def check_python() -> tuple[bool, str, str]:
     v = sys.version_info
     label = f"Python {v.major}.{v.minor}.{v.micro}"
     if (v.major, v.minor) < MIN_PYTHON:
-        return False, label, f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} 以降が必要です"
+        return (False, label,
+                f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} 以降が必要です"
+                "（macOS 標準の python3 は 3.9 のため別途用意します）\n"
+                "brew install python@3.13\n"
+                "または  uv python install 3.13")
     return True, label, ""
 
 
@@ -563,7 +567,8 @@ def cmd_install(args) -> int:
     for ok, label, hint in (check_macos(), check_python()):
         say(f"  {OK if ok else NG} {label}")
         if not ok:
-            say(f"     {hint}")
+            for line in hint.splitlines():
+                say(f"     {line}")
             return 1
 
     head("2. 仮想環境と依存パッケージ")
