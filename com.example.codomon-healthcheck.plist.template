@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.example.codomon-healthcheck</string>
+
+    <!--
+      定期実行が止まっていないかを見張るジョブ。
+      本体が「静かに止まる」障害を3回起こしており、いずれも人が尋ねるまで
+      気づけなかったため、検知だけを独立して行う。数百ミリ秒で終わる。
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/env</string>
+        <string>/PATH/TO/codomon-photo-sync/.venv/bin/python3</string>
+        <string>/PATH/TO/codomon-photo-sync/healthcheck.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/PATH/TO/codomon-photo-sync</string>
+
+    <!-- 朝(7:00)と夜(22:00)のジョブが終わった直後に確認する -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>0</integer></dict>
+    </array>
+
+    <!--
+      監視役のログを監視対象と同じ場所に置くと、同じ理由で共倒れする。
+      必ず ~/Library/Logs（TCC保護外）へ出すこと。
+    -->
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_USER/Library/Logs/codomon-photo-sync/healthcheck.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_USER/Library/Logs/codomon-photo-sync/healthcheck.err.log</string>
+</dict>
+</plist>

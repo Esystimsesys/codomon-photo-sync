@@ -17,5 +17,8 @@
   "_days_to_check": "毎回さかのぼる日数。環境変数 CODOMON_DAYS で一時的に上書きできます。",
 
   "mitene_scope": "家族みんなに公開",
-  "_mitene_scope": "みてねの公開範囲ボタンの表示名。検証時は「管理者のみ」を指定します。"
+  "_mitene_scope": "みてねの公開範囲ボタンの表示名。検証時は「管理者のみ」を指定します。",
+
+  "job_labels": ["com.example.codomon-sync", "com.example.codomon-person"],
+  "_job_labels": "死活監視の対象となる launchd のラベル。plist の Label と揃えてください。"
 }

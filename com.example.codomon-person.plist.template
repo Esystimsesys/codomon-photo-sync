@@ -38,9 +38,17 @@
         <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>0</integer></dict>
     </array>
 
+    <!--
+      ログは ~/Library/Logs へ出す（プロジェクト配下に置かない）。
+      ~/Documents のようなTCC保護フォルダに置くと、launchd が作成した時点で
+      ログファイルに com.apple.macl が刻まれ、再起動やOSアップデートで
+      その許可が失効した瞬間に launchd が標準出力を開けなくなる。
+      その場合 EX_CONFIG(78) で終了し、プログラムは起動せずログも一切残らない。
+      詳細は docs/03-operations.md
+    -->
     <key>StandardOutPath</key>
-    <string>/PATH/TO/codomon-photo-sync/launchd.person-album.out.log</string>
+    <string>/Users/YOUR_USER/Library/Logs/codomon-photo-sync/person-album.out.log</string>
     <key>StandardErrorPath</key>
-    <string>/PATH/TO/codomon-photo-sync/launchd.person-album.err.log</string>
+    <string>/Users/YOUR_USER/Library/Logs/codomon-photo-sync/person-album.err.log</string>
 </dict>
 </plist>

@@ -21,11 +21,16 @@ security add-generic-password -a "$USER" -s codomon-photo-sync-pass -w
 .venv/bin/python3 mitene_upload.py --login   # 手動ログイン＋OTP
 .venv/bin/python3 mitene_upload.py --seed    # 既にアップ済みの分を「対応済み」に
 
-# 5. 定期実行を登録（2つとも）
+# 5. ログの出力先を作る（詳細は「ログ」の節。プロジェクト配下に置いてはいけない）
+mkdir -p ~/Library/Logs/codomon-photo-sync
+
+# 6. 定期実行を登録（3つとも）
 cp com.example.codomon-sync.plist ~/Library/LaunchAgents/
 cp com.example.codomon-person.plist ~/Library/LaunchAgents/
+cp com.example.codomon-healthcheck.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.example.codomon-sync.plist
 launchctl load ~/Library/LaunchAgents/com.example.codomon-person.plist
+launchctl load ~/Library/LaunchAgents/com.example.codomon-healthcheck.plist
 ```
 
 初回の launchd 実行時に Keychain アクセス許可ダイアログが出たら**「常に許可」**を選ぶ。
@@ -40,6 +45,7 @@ launchctl load ~/Library/LaunchAgents/com.example.codomon-person.plist
 | --- | --- | --- | --- |
 | `com.example.codomon-sync` | 17:30 / 21:00 | 取得 → 写真.app取り込み → 人物アルバム更新 | 約20秒 |
 | `com.example.codomon-person` | 7:00 / 13:00 / 19:00 / 22:00 | 人物アルバム更新 → みてねへアップロード | 約6秒＋送信時間 |
+| `com.example.codomon-healthcheck` | 8:00 / 23:00 | 上2つが止まっていないか確認し、異常なら通知 | 1秒未満 |
 
 ```bash
 launchctl start com.example.codomon-sync    # 手動キック
@@ -67,8 +73,17 @@ launchctl unload ~/Library/LaunchAgents/com.example.codomon-sync.plist  # 停止
 
 | ファイル | 内容 |
 | --- | --- |
-| `sync.log` | アプリケーションログ（0600・5MB超で1世代退避） |
-| `launchd.<ジョブ名>.out.log` / `.err.log` | launchd の標準出力・エラー（ジョブ別） |
+| `sync.log`（プロジェクト配下） | アプリケーションログ（0600・5MB超で1世代退避） |
+| `~/Library/Logs/codomon-photo-sync/<ジョブ名>.out.log` / `.err.log` | launchd の標準出力・エラー（ジョブ別） |
+| `~/Library/Logs/codomon-photo-sync/health.log` | 死活監視の結果 |
+
+**launchd のログをプロジェクト配下（`~/Documents`）に置いてはいけない。**
+TCC保護フォルダ内に launchd がログファイルを作ると、その瞬間に拡張属性
+`com.apple.macl` が刻まれる。この許可は再起動やOSアップデートをまたぐと失効し、
+以後 launchd は標準出力を開けず `EX_CONFIG (78)` で**プログラムを起動しなくなる**。
+`~/Library/Logs` 配下では macl が付かないことを実測で確認している。
+
+`sync.log` は Python が自分で開くため macl は付かず、プロジェクト配下のままでよい。
 
 正常時の出力:
 
@@ -163,19 +178,37 @@ AppleScript では以下が**サポートされていない**（試行して確�
 
 ### launchd が終了コード 78（EX_CONFIG）で起動すらしない
 
-**症状**: `launchctl list` の終了コードが 78。`sync.log` にも `launchd.*.err.log` にも**何も残らない**（プログラムが起動していないため）。手動実行は成功する。
+**症状**: `launchctl list` の終了コードが 78。`sync.log` にも launchd のログにも**何も残らない**（プログラムが起動していないため）。手動実行は成功する。
 
-**原因**: `StandardOutPath` / `StandardErrorPath` に指定した**既存ログファイルに拡張属性 `com.apple.macl` が付き、launchd が開けなくなっている**。macOSアップデート時に発生した。launchd は標準出力の割り当てに失敗した時点で EX_CONFIG を返し、プログラムを起動しない。
+**原因**: `StandardOutPath` / `StandardErrorPath` に指定したログファイルを launchd が開けない。**これが起きるのはログの出力先が TCC 保護フォルダ（`~/Documents` など）にある場合**で、launchd がログファイルを作った時点で拡張属性 `com.apple.macl` が刻まれ、その許可が再起動やOSアップデートで失効するため。launchd は標準出力の割り当てに失敗した時点で EX_CONFIG を返し、プログラムを起動しない。
 
-**対処**: 該当ログファイルを削除して作り直す。
+**恒久対処**: ログの出力先を `~/Library/Logs/codomon-photo-sync/` へ移す（実施済み）。
+
+> **やってはいけない対処**: 「ログファイルを削除して作り直す」。一時的には復旧するが、launchd が作り直した瞬間に macl が再び刻まれるため、**次の再起動でまた同じ止まり方をする**。実際にこの対処で直したつもりが6日後に再発した（2026-08-17 → 08-23）。
+
+**切り分け方**: 出力先だけを `/tmp` に変えたテスト用ジョブを作り、それが成功すれば出力先が原因と確定できる。作業ディレクトリ・実行するプログラムを固定したまま出力先だけを差し替えるのがコツ。
+
+### venv の python が LWCR で弾かれて EX_CONFIG になる
+
+同じ終了コード 78 でも、原因が**実行するプログラム側**のことがある。uv が入れた python は ad-hoc 署名のため、launchd の Lightweight Code Requirement に弾かれる。Apple 署名の `/usr/bin/env` を噛ませて起動すると通る（plist に実装済み）。
+
+上記2つは症状が区別できないため、切り分けテストで**出力先**と**プログラム**のどちらが原因かを先に確定させること。
+
+### 定期実行が止まったことに気づけない
+
+**この仕組みは静かに止まる。** 過去3回（2026-08-07 / 08-17 / 08-23）の停止はいずれも人が「動いてる？」と尋ねて初めて発覚し、最長29時間気づけなかった。EX_CONFIG の場合はログが1行も出ないため、ログを見に行っても何も分からない。
+
+対策として `healthcheck.py` を1日2回（8:00 / 23:00）動かしている。
+
+- 各ジョブの前回終了コードが 0 以外なら異常とみなす（EX_CONFIG を1サイクル以内に検知できる）
+- `sync.log` の最終実行から18時間以上経過していれば異常とみなす（ジョブ間隔の最長は 22:00→翌7:00 の9時間。Macの電源が落ちていた分の猶予を足した値）
+- 異常時は通知センターへ表示し、`health.log` に記録する
+
+監視役が監視対象と共倒れしないよう、**このジョブのログも `~/Library/Logs` に置く**こと。
 
 ```bash
-rm -f launchd.*.log
-launchctl bootout gui/$(id -u)/com.example.codomon-sync
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.codomon-sync.plist
+.venv/bin/python3 healthcheck.py   # 手動確認（正常なら終了コード0）
 ```
-
-**切り分け方**: 出力先を `/tmp` に変えたテスト用ジョブを作り、それが成功すればログファイルが原因と確定できる。
 
 ### コドモンへの自動再ログインが「ログイン導線が無い」で失敗する
 
