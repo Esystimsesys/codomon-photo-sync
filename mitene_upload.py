@@ -57,7 +57,8 @@ BATCH = 20
 SCOPE_DEFAULT = _CFG["mitene_scope"]
 
 # 失効時にユーザーが打つコマンド。メッセージ内で必ず案内する。
-RECOVER_CMD = "cd ~/Documents/Development/codomon-photo-sync && .venv/bin/python3 mitene_upload.py --login"
+# 設置場所は人によって違うので、実行中のファイル位置から組み立てる。
+RECOVER_CMD = f"cd {HERE} && .venv/bin/python3 mitene_upload.py --login"
 
 
 def log(message: str) -> None:
@@ -89,8 +90,12 @@ def person_files(person: str) -> list[Path]:
     """
     db = Path.home() / "Pictures/Photos Library.photoslibrary/database/Photos.sqlite"
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-    pk = con.execute(
-        "select Z_PK from ZGENERICALBUM where ZTITLE=? and ZTRASHEDSTATE=0", (_CFG["album"],)).fetchone()[0]
+    row = con.execute(
+        "select Z_PK from ZGENERICALBUM where ZTITLE=? and ZTRASHEDSTATE=0", (_CFG["album"],)).fetchone()
+    if row is None:
+        # 写真.appへの取り込みが一度も走っていない状態。異常ではないので空で返す。
+        return []
+    pk = row[0]
     rows = con.execute("""
         select distinct aa.ZORIGINALFILENAME
         from ZDETECTEDFACE f
@@ -269,6 +274,13 @@ def main() -> int:
 
     if args.login:
         return manual_login()
+
+    if not STATE_FILE.exists():
+        # みてね連携は任意。一度もログインしていない環境で毎回失敗扱いにすると、
+        # 使っていない人のジョブが1日4回赤くなり続ける。
+        log("みてね連携は未設定のためスキップしました"
+            f"（使う場合: cd {HERE} && .venv/bin/python3 setup.py mitene）")
+        return 0
 
     files = person_files(args.person)
     ledger = load_ledger()

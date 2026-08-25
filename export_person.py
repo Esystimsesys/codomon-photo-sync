@@ -89,7 +89,7 @@ def album_pk(con: sqlite3.Connection) -> int:
         "select Z_PK from ZGENERICALBUM where ZTITLE = ? and ZTRASHEDSTATE = 0 "
         "order by ZCACHEDCOUNT desc", (ALBUM,)).fetchall()
     if not rows:
-        raise SystemExit(f"アルバム「{ALBUM}」が見つかりません")
+        return 0
     return rows[0][0]
 
 
@@ -187,8 +187,18 @@ def main() -> int:
                     help="ローカルへの書き出しをせず、アルバム更新だけ行う")
     args = ap.parse_args()
 
+    if not args.person:
+        # 顔認識は任意機能。config.json の person が空なら使わない意思とみなす。
+        log("人物名（config.json の person）が未設定のため、人物アルバムの更新をスキップしました")
+        return 0
+
     con = connect()
     pk = album_pk(con)
+    if pk == 0:
+        # 写真.appへの取り込みがまだ一度も走っていない。初回セットアップ直後の正常な状態。
+        log(f"アルバム「{ALBUM}」がまだありません。"
+            "先に sync_photos.py を実行して写真を取り込んでください")
+        return 0
 
     gap = analysis_gap(con, pk)
     if gap:
