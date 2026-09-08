@@ -92,13 +92,15 @@ def record(line: str) -> None:
 def main() -> int:
     problems: list[str] = []
 
-    for label, code in exit_codes().items():
-        if code not in ("0", "-"):
+    codes = exit_codes()
+    for label, code in codes.items():
+        # 自身の前回の異常終了を再検知すると、復旧しても異常が解除されない。
+        if label.rsplit(".", 1)[-1] != "healthcheck" and code not in ("0", "-"):
             short = label.rsplit(".", 1)[-1]
             hint = "（EX_CONFIG: プログラムが起動していません）" if code == "78" else ""
             problems.append(f"{short} が終了コード {code} で失敗{hint}")
 
-    missing = [j for j in JOBS if j not in exit_codes()]
+    missing = [j for j in JOBS if j not in codes]
     if missing:
         problems.append(f"ジョブが登録されていません: {', '.join(m.rsplit('.', 1)[-1] for m in missing)}")
 

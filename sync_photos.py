@@ -212,16 +212,16 @@ def fetch_timeline(context, service_id: str, start: date, end: date) -> list[dic
         )
         r = context.request.get(url)
         if r.status != 200:
-            log(f"警告: timeline 取得失敗 (status={r.status}, page={pageno})")
-            break
+            raise RuntimeError(
+                f"timeline 取得失敗 (status={r.status}, page={pageno})")
         data = json.loads(r.text())
         batch = data.get("data") or []
-        if not batch:
-            break
         items += batch
         if not data.get("next_page"):
-            break
-    return items
+            return items
+        if not batch:
+            raise RuntimeError(f"timeline が空なのに次ページがあります (page={pageno})")
+    raise RuntimeError(f"timeline のページ上限 ({MAX_PAGES}) に達しました")
 
 
 def photo_urls(item: dict) -> list[str]:
@@ -482,10 +482,9 @@ def save_records(items: list[dict]) -> tuple[int, int]:
     days = posts = 0
     for day, group in by_day.items():
         dest_dir = SAVE_ROOT / day
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        (dest_dir / "記録.md").write_text(render_markdown(day, group), encoding="utf-8")
-        (dest_dir / "posts.json").write_text(
-            json.dumps(group, ensure_ascii=False, indent=2), encoding="utf-8")
+        atomic_write_text(dest_dir / "記録.md", render_markdown(day, group))
+        atomic_write_text(dest_dir / "posts.json",
+                          json.dumps(group, ensure_ascii=False, indent=2))
         days += 1
         posts += len(group)
     return days, posts
@@ -599,8 +598,13 @@ def update_person_album() -> None:
         return
     try:
         # export_person.py は自分で sync.log に書くので、ここで再ログしない
+        #
+        # タイムアウトは短くてよい。通常13秒で終わる処理で、失敗しても
+        # 7/13/19/22時の person ジョブが同じ更新を毎回やり直すため、
+        # ここで粘る意味がない。2026-08-30 に 1800 秒まで粘って本体の完了を
+        # 30分遅らせたことがある。
         r = subprocess.run([sys.executable, str(script), "--no-copy"],
-                           capture_output=True, text=True, timeout=1800)
+                           capture_output=True, text=True, timeout=300)
         if r.returncode != 0:
             log(f"警告: 人物アルバムの更新に失敗: {r.stderr.strip()[:150]}")
     except Exception as e:  # noqa: BLE001
@@ -624,8 +628,10 @@ def sync() -> None:
         start = end - timedelta(days=DAYS_TO_CHECK)
 
         total_new = total_skip = total_days = total_posts = total_fnew = 0
+        all_items: list[dict] = []
         for sid in get_service_ids(context):
             items = fetch_timeline(context, sid, start, end)
+            all_items.extend(items)
             n_photos = sum(len(photo_urls(i)) for i in items)
             log(f"施設 {sid}: 投稿 {len(items)} 件 / 写真 {n_photos} 枚")
 
@@ -636,9 +642,9 @@ def sync() -> None:
             fnew, fskip = download_files(context, items)
             total_fnew += fnew
 
-            days, posts = save_records(items)
-            total_days += days
-            total_posts += posts
+        # 同日分を施設間で上書きしないよう、全施設・全ページの取得完了後に保存する。
+        # 途中で取得に失敗した場合は、保存済みの記録をそのまま残す。
+        total_days, total_posts = save_records(all_items)
 
         if IMPORT_TO_PHOTOS:
             try:
