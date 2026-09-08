@@ -29,7 +29,6 @@ import argparse
 import json
 import os
 import re
-import sqlite3
 import stat
 import subprocess
 import sys
@@ -39,7 +38,8 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 from common import (atomic_write_text, config_save_root, harden_umask,
-                    job_lock, load_config, rotate_log)
+                    job_lock, load_config, open_library, person_photos,
+                    rotate_log)
 
 HERE = Path(__file__).parent
 STATE_FILE = HERE / "mitene_state.json"       # ログインセッション（0600）
@@ -85,28 +85,15 @@ def save_ledger(names: set[str]) -> None:
 def person_files(person: str) -> list[Path]:
     """指定人物と識別された写真のローカルパス一覧。
 
-    判定は export_person.py と同じく写真.appのライブラリDBから行う。
-    mode=ro で開くこと（immutable=1 は WAL を無視して古い結果を返す）。
+    判定は common.person_photos() に一本化してある。export_person.py と
+    別々にSQLを持っていた頃は、片方だけ直すと「アルバムには入るのにみてねには
+    上がらない」といった食い違いが静かに起きる状態だった。
     """
-    db = Path.home() / "Pictures/Photos Library.photoslibrary/database/Photos.sqlite"
-    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-    row = con.execute(
-        "select Z_PK from ZGENERICALBUM where ZTITLE=? and ZTRASHEDSTATE=0", (_CFG["album"],)).fetchone()
-    if row is None:
-        # 写真.appへの取り込みが一度も走っていない状態。異常ではないので空で返す。
-        return []
-    pk = row[0]
-    rows = con.execute("""
-        select distinct aa.ZORIGINALFILENAME
-        from ZDETECTEDFACE f
-        join Z_33ASSETS a on a.Z_3ASSETS = f.ZASSETFORFACE
-        join ZADDITIONALASSETATTRIBUTES aa on aa.ZASSET = f.ZASSETFORFACE
-        join ZPERSON p on p.Z_PK = f.ZPERSONFORFACE
-        where a.Z_33ALBUMS = ? and p.ZFULLNAME = ?
-    """, (pk, person)).fetchall()
-    names = {r[0] for r in rows if r[0]}
+    con = open_library(on_warn=log)
+    names = person_photos(con, _CFG["album"], person)
     index = {p.name: p for p in SOURCE_ROOT.glob("*/*.jpeg")}
-    return sorted((index[n] for n in names if n in index), key=lambda p: (p.parent.name, p.name))
+    return sorted((index[n] for n in names if n in index),
+                  key=lambda p: (p.parent.name, p.name))
 
 
 def manual_login(wait_seconds: int = 600) -> int:
@@ -287,7 +274,7 @@ def main() -> int:
     todo = [f for f in files if f.name not in ledger]
 
     if args.seed:
-        save_ledger({f.name for f in files})
+        save_ledger(ledger | {f.name for f in files})
         log(f"{len(files)} 枚を『アップロード済み』として記録しました（送信していません）")
         return 0
 

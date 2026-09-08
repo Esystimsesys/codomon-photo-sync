@@ -293,10 +293,18 @@ def check_venv() -> tuple[bool, str, str]:
 
 
 def check_chromium() -> tuple[bool, str, str]:
-    cache = Path.home() / "Library" / "Caches" / "ms-playwright"
-    if cache.is_dir() and any(cache.glob("chromium*")):
+    # 別バージョンのキャッシュがあっても、この venv で起動できるとは限らない。
+    probe = ("from playwright.sync_api import sync_playwright\n"
+             "with sync_playwright() as p:\n"
+             "    browser = p.chromium.launch(headless=True, timeout=15000)\n"
+             "    browser.close()\n")
+    try:
+        result = run([str(VENV_PY), "-c", probe], timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        result = None
+    if result is not None and result.returncode == 0:
         return True, "Chromium", ""
-    return False, "Chromium が未インストール", ".venv/bin/playwright install chromium"
+    return False, "Chromium を起動できません", ".venv/bin/playwright install chromium"
 
 
 def check_config() -> tuple[bool, str, str]:
@@ -545,7 +553,8 @@ def cmd_schedule(args) -> int:
         p.unlink(missing_ok=True)
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    ok = all(load_job(label, spec) for label, spec in JOBS.items())
+    results = [load_job(label, spec) for label, spec in JOBS.items()]
+    ok = all(results)
 
     # 死活監視が見るラベルは、いま登録したものと必ず一致させる。
     # 手で揃えさせると、ずれたときに「ジョブが未登録」と誤検知する。
@@ -589,7 +598,9 @@ def cmd_install(args) -> int:
             say(f"     {line}")
         say("     ※ 顔認識を使わない場合は不要です")
 
-    cmd_schedule(argparse.Namespace(quiet=True))
+    if cmd_schedule(argparse.Namespace(quiet=True)) != 0:
+        say(f"  {NG} 定期実行の登録に失敗しました。修正後に setup.py schedule を実行してください")
+        return 1
 
     head("完了")
     say("  動作を確認するには:")
