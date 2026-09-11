@@ -22,6 +22,15 @@ def response(items=None, next_page=False, status=200):
     return result
 
 
+def sales_notice(identifier):
+    """写真共有・販売の告知。photos がリストではなく {"lists": [...]} で届く。"""
+    return {"id": identifier, "display_date": "2026-09-01", "timeline_kind": "topics",
+            "title": "撮影写真の販売", "content": "販売のお知らせ", "photo_count": 2,
+            "photo_url": "https://image.example/albums/cover.jpg",
+            "photos": {"lists": [{"id": "1", "url": "https://image.example/albums/1.jpg"},
+                                 {"id": "2", "url": ""}]}}
+
+
 class SyncRecordsTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
@@ -93,6 +102,25 @@ class SyncRecordsTests(unittest.TestCase):
         context.request.get.return_value = response(next_page=True)
         with self.assertRaisesRegex(RuntimeError, "空なのに"):
             sync.fetch_timeline(context, "one", date.today(), date.today())
+
+    def test_sales_album_photos_are_not_downloaded(self):
+        # 購入対象の写真なので URL を返さず、取得のリクエストも出さない
+        self.assertEqual(sync.photo_urls(sales_notice("S")), [])
+        context = MagicMock()
+        self.assertEqual(sync.download_photos(context, [sales_notice("S")]), (0, 0))
+        context.request.get.assert_not_called()
+
+    def test_sales_album_notice_does_not_stop_sync(self):
+        self.run_sync(["one"], [response([self.a, sales_notice("S")])])
+        text = self.archive()["記録.md"].decode()
+        self.assertIn("施設Aの記録", text)
+        self.assertIn("販売のお知らせ", text)
+        self.assertNotIn("### 写真", text)
+        self.assertNotIn("albums", text)
+
+    def test_list_photos_are_still_collected(self):
+        item = dict(self.a, photos=[{"url": "https://image.example/p/1.jpg"}, {"url": ""}, "x"])
+        self.assertEqual(sync.photo_urls(item), ["https://image.example/p/1.jpg"])
 
 
 if __name__ == "__main__":

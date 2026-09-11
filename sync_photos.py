@@ -224,8 +224,21 @@ def fetch_timeline(context, service_id: str, start: date, end: date) -> list[dic
     raise RuntimeError(f"timeline のページ上限 ({MAX_PAGES}) に達しました")
 
 
+def timeline_photos(item: dict) -> list[dict]:
+    """投稿に添付された、無料で閲覧できる写真だけを返す。
+
+    写真共有・販売の告知（お知らせ）は photos が {"lists": [...]} という dict で
+    届く。中身は購入対象の写真なので取得しない（docs/02-security.md）。
+    リスト以外の形は写真なしとして扱い、想定外の1件で同期全体を止めない。
+    """
+    photos = item.get("photos")
+    if not isinstance(photos, list):
+        return []
+    return [p for p in photos if isinstance(p, dict) and p.get("url")]
+
+
 def photo_urls(item: dict) -> list[str]:
-    return [p["url"] for p in (item.get("photos") or []) if p.get("url")]
+    return [p["url"] for p in timeline_photos(item)]
 
 
 _JP_DATE = re.compile(r"(\d{4})年(\d{1,2})月(\d{1,2})日")
@@ -447,12 +460,10 @@ def render_markdown(day: str, items: list[dict]) -> str:
         if bill_lines(item):
             lines.append("")
 
-        photos = item.get("photos") or []
+        photos = timeline_photos(item)
         if photos:
             lines.append(f"### 写真 {len(photos)}枚")
             for ph in photos:
-                if not ph.get("url"):
-                    continue
                 name = photo_filename(ph["url"])
                 cap = (ph.get("caption") or "").strip()
                 lines.append(f"- ![{cap}]({name})" + (f" — {cap}" if cap else ""))
