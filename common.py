@@ -219,16 +219,40 @@ def album_pk(con: sqlite3.Connection, title: str) -> int:
     return row[0] if row else 0
 
 
+def album_assets_join(con: sqlite3.Connection) -> tuple[str, str, str]:
+    """アルバム↔写真の結合表の名前と、アルバム側・写真側の列名を返す。
+
+    表名の数字(Z_33ASSETS の 33)は Core Data のエンティティ番号で、写真.app の
+    スキーマが変わると黙って変わる。2026-09-16 の更新では 33 → 34 になり、
+    人物アルバムとみてねへの連携が11回連続で "no such table: Z_33ASSETS" で
+    止まっていた。番号を書かず、毎回スキーマから引くこと。
+    """
+    for (name,) in con.execute(
+            "select name from sqlite_master where type = 'table' "
+            "and name glob 'Z_[0-9]*ASSETS' order by name").fetchall():
+        cols = [c[1] for c in con.execute(f'pragma table_info("{name}")')]
+        album_col = next((c for c in cols if c.endswith("ALBUMS")), None)
+        # Z_FOK_3ASSETS は並び順の保持用。写真のZ_PKを指す列だけを採る。
+        asset_col = next((c for c in cols
+                          if c.endswith("ASSETS") and not c.startswith("Z_FOK_")), None)
+        if album_col and asset_col:
+            return name, album_col, asset_col
+    raise SystemExit(
+        "写真ライブラリにアルバムと写真の結合表が見つかりません。"
+        "写真.app のスキーマが想定と異なります。")
+
+
 def album_member_names(con: sqlite3.Connection, title: str) -> set[str]:
     """アルバムに入っている写真の「元ファイル名」の集合。"""
     pk = album_pk(con, title)
     if not pk:
         return set()
-    rows = con.execute("""
+    join, album_col, asset_col = album_assets_join(con)
+    rows = con.execute(f"""
         select aa.ZORIGINALFILENAME
-        from Z_33ASSETS a
-        join ZADDITIONALASSETATTRIBUTES aa on aa.ZASSET = a.Z_3ASSETS
-        where a.Z_33ALBUMS = ?
+        from {join} a
+        join ZADDITIONALASSETATTRIBUTES aa on aa.ZASSET = a.{asset_col}
+        where a.{album_col} = ?
     """, (pk,)).fetchall()
     return {r[0] for r in rows if r[0]}
 
@@ -304,14 +328,15 @@ def person_photo_candidates(con: sqlite3.Connection, album: str, person: str,
     pk = album_pk(con, album)
     if not pk or not person:
         return []
-    rows = con.execute("""
+    join, album_col, asset_col = album_assets_join(con)
+    rows = con.execute(f"""
         select f.ZASSETFORFACE, aa.ZORIGINALFILENAME, p.ZFULLNAME,
                f.ZSIZE, f.ZSOURCEWIDTH, f.ZSOURCEHEIGHT
         from ZDETECTEDFACE f
-        join Z_33ASSETS a on a.Z_3ASSETS = f.ZASSETFORFACE
+        join {join} a on a.{asset_col} = f.ZASSETFORFACE
         join ZADDITIONALASSETATTRIBUTES aa on aa.ZASSET = f.ZASSETFORFACE
         left join ZPERSON p on p.Z_PK = f.ZPERSONFORFACE
-        where a.Z_33ALBUMS = ?
+        where a.{album_col} = ?
     """, (pk,)).fetchall()
 
     by_asset: dict[int, list] = {}

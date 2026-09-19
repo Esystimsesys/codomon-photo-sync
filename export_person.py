@@ -30,10 +30,10 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from common import (DB_SLOW_SECONDS, Thresholds, album_member_names, album_pk,
-                    config_person_album, config_save_root, harden_umask,
-                    job_lock, load_config, open_library,
-                    person_photo_candidates, rotate_log)
+from common import (DB_SLOW_SECONDS, Thresholds, album_assets_join,
+                    album_member_names, album_pk, config_person_album,
+                    config_save_root, harden_umask, job_lock, load_config,
+                    open_library, person_photo_candidates, rotate_log)
 
 _CFG = load_config()
 ALBUM = _CFG["album"]
@@ -64,10 +64,11 @@ DEST_ROOT = SOURCE_ROOT.parent / f"{SOURCE_ROOT.name}-person"
 
 def analysis_gap(con, pk: int) -> int:
     """未解析の写真数。0でなければ取りこぼしがある。"""
-    return con.execute("""
+    join, album_col, asset_col = album_assets_join(con)
+    return con.execute(f"""
         select count(*) from ZASSET s
-        join Z_33ASSETS a on a.Z_3ASSETS = s.Z_PK
-        where a.Z_33ALBUMS = ? and s.ZANALYSISSTATEMODIFICATIONDATE is null
+        join {join} a on a.{asset_col} = s.Z_PK
+        where a.{album_col} = ? and s.ZANALYSISSTATEMODIFICATIONDATE is null
     """, (pk,)).fetchone()[0]
 
 
