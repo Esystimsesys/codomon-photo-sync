@@ -1,0 +1,76 @@
+{
+  "name": "codomon-photo-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "コドモンの写真と記録をMacに保存し、みてねへ送るツール",
+  "author": "codomon-photo-sync contributors",
+  "license": "MIT",
+  "main": "dist/main/index.cjs",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "node scripts/build.mjs",
+    "test": "tsx --test tests/*.test.ts",
+    "test:ui": "playwright test",
+    "dev": "vite --host localhost",
+    "start": "npm run build && electron .",
+    "demo": "npm run build && electron . --demo",
+    "package:dir": "npm run build && electron-builder --dir --publish never",
+    "package:mac": "npm run build && electron-builder --mac dmg zip --publish never",
+    "browser:install": "node scripts/install-browser.mjs",
+    "test:native": "npm run build && node scripts/smoke-electron.mjs"
+  },
+  "dependencies": {
+    "piexifjs": "^1.0.6",
+    "playwright": "^1.58.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@types/node": "^24.0.0",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.0.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.0.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.0.0"
+  },
+  "build": {
+    "appId": "io.github.esystimsesys.codomon-photo-sync",
+    "productName": "おむかえフォト",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/playwright*/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "browsers",
+        "to": "browsers",
+        "filter": [
+          "chromium-*/**/*",
+          "ffmpeg-*/**/*"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.photography",
+      "identity": null,
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "extendInfo": {
+        "NSAppleEventsUsageDescription": "保存した園の写真を写真アプリのアルバムに追加します。",
+        "CFBundleDisplayName": "おむかえフォト"
+      },
+      "icon": "build/icon.icns"
+    },
+    "publish": null,
+    "artifactName": "omukae-photo-${version}-${arch}.${ext}"
+  }
+}
