@@ -767,6 +767,8 @@ def cmd_uninstall(args) -> int:
     head("撤去")
     cfg = load_config()
     save_root = Path(cfg.get("save_root") or "~/Pictures/codomon").expanduser()
+    # export_person.py を手で実行したときの書き出し先（export_person.DEST_ROOT と同じ規則）
+    person_root = save_root.parent / f"{save_root.name}-person"
 
     say("  定期実行を解除します（この操作は常に行います）。")
     for label in JOBS:
@@ -789,7 +791,8 @@ def cmd_uninstall(args) -> int:
         ("state", "セッション・台帳・設定（config.json / mitene_state.json ほか）", args.state),
         ("keychain", "Keychain のコドモン認証情報", args.keychain),
         ("venv", f"仮想環境（{VENV}）", args.venv),
-        ("photos", f"取得した写真と記録（{save_root}）", args.photos),
+        ("photos", f"取得した写真と記録（{save_root}）"
+         + (f"と {person_root}" if person_root.exists() else ""), args.photos),
     ]
     interactive = not any(flag for _, _, flag in targets) and not args.yes
     if interactive and not interactive_tty():
@@ -818,22 +821,28 @@ def cmd_uninstall(args) -> int:
         elif key == "state":
             for name in ("config.json", "mitene_state.json", "storage_state.json",
                          "mitene_uploaded.json", "photos_skip.json",
-                         ".last_session_refresh", ".job.lock", "sync.log", "sync.log.1"):
+                         ".last_session_refresh", ".job.lock", "sync.log", "sync.log.1",
+                         "login_failed.png"):
                 (HERE / name).unlink(missing_ok=True)
         elif key == "keychain":
-            user = os.environ.get("USER", "")
+            user = getpass.getuser()
             for s in (KEYCHAIN_USER, KEYCHAIN_PASS):
                 run(["security", "delete-generic-password", "-a", user, "-s", s])
         elif key == "venv":
             shutil.rmtree(VENV, ignore_errors=True)
         elif key == "photos":
             shutil.rmtree(save_root, ignore_errors=True)
+            shutil.rmtree(person_root, ignore_errors=True)
         say(f"  {OK} {label} を削除しました")
 
     say("")
-    say("  写真.app に取り込んだ写真とアルバムはそのままです。")
-    say("  不要なら写真.app のアルバム一覧から手で削除してください")
-    say("  （AppleScript ではアルバムから写真を外せないため、自動化していません）。")
+    say("  次のものは残っています。不要なら手で削除してください（README の「アンインストール」）。")
+    say("  - 写真.app のアルバムと、取り込んだ写真")
+    say("    アルバムを削除しても写真はライブラリに残ります。写真ごと消すときは、")
+    say("    先にアルバムを開いて全選択し、削除してください")
+    say("  - ブラウザ Chromium（~/Library/Caches/ms-playwright）")
+    say("    Playwright を使うほかのツールと共用のため、自動では消しません")
+    say(f"  - このフォルダ（{HERE}）")
     return 0
 
 
