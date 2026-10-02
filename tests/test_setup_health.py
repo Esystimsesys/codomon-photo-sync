@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import types
 import unittest
 from datetime import datetime
@@ -70,6 +71,44 @@ class ScheduleTests(unittest.TestCase):
                 patch.object(setup, "say"), patch.object(setup, "head") as head:
             self.assertEqual(setup.cmd_install(argparse.Namespace(yes=True)), 1)
         self.assertNotIn("完了", [call.args[0] for call in head.call_args_list])
+
+
+class MiteneTests(unittest.TestCase):
+    def run_mitene(self, existing=(), keep_current=True):
+        with tempfile.TemporaryDirectory() as tmp:
+            here = Path(tmp)
+            for name in existing:
+                (here / name).write_text("[]", encoding="utf-8")
+            with patch.object(setup, "HERE", here), \
+                    patch.object(setup, "VENV_PY") as python, \
+                    patch.object(setup, "load_config", return_value={"person": "Alice"}), \
+                    patch.object(setup, "confirm", return_value=keep_current), \
+                    patch.object(setup, "say"), patch.object(setup, "head"), \
+                    patch.object(setup.subprocess, "run",
+                                 return_value=Mock(returncode=0)) as run:
+                python.exists.return_value = True
+                self.assertEqual(setup.cmd_mitene(argparse.Namespace(yes=False)), 0)
+            ledger = (here / "mitene_uploaded.json").exists()
+        return [call.args[0][-1] for call in run.call_args_list], ledger
+
+    # 失効中にたまった未送信の写真を「送信済み」にしない
+    def test_relogin_with_ledger_does_not_seed(self):
+        calls, _ = self.run_mitene(existing=["mitene_state.json", "mitene_uploaded.json"])
+        self.assertEqual(calls, ["--login"])
+
+    def test_relogin_before_first_upload_does_not_seed(self):
+        # 初回に「今ある写真も送る」を選び、最初の送信前に失効した場合（台帳がまだ無い）
+        calls, _ = self.run_mitene(existing=["mitene_state.json"])
+        self.assertEqual(calls, ["--login"])
+
+    def test_first_setup_offers_seed(self):
+        calls, _ = self.run_mitene()
+        self.assertEqual(calls, ["--login", "--seed"])
+
+    def test_choosing_to_send_marks_setup_done(self):
+        calls, ledger = self.run_mitene(keep_current=False)
+        self.assertEqual(calls, ["--login"])
+        self.assertTrue(ledger)
 
 
 class HealthTests(unittest.TestCase):

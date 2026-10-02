@@ -39,8 +39,8 @@ def load_config() -> dict:
         # 顔の写り方でみてねへ送るかを決める閾値。詳細は docs/04-face-recognition.md
         "face_min_px": 25,        # 顔の幅がこれ以上なら採用（配信画像は幅500px固定）
         "face_min_ratio": 0.6,    # 大きく写っていても、最大の顔のこの比未満なら脇役として除外
-        "face_main_ratio": 1.0,   # 顔が小さくても、写真内で最大の顔のこの比以上なら採用
-        "face_max_people": 0,     # 上の救済を使う条件。写真内の検出人数の上限（0で無制限）
+        "face_main_ratio": 0.8,   # 顔が小さくても、写真内で最大の顔のこの比以上なら採用
+        "face_max_people": 5,     # 上の救済を使う条件。写真内の検出人数の上限（0で無制限）
         # 死活監視の対象。setup.py が登録したジョブと一致させる（手で書かない）
         "job_labels": ["com.codomon-photo-sync.sync",
                        "com.codomon-photo-sync.person",
@@ -91,7 +91,7 @@ def job_lock(timeout_note: str = ""):
 
     launchd は同一ラベルの多重起動は防ぐが、ラベルの違う2ジョブは防がない。
     スリープ復帰時に取りこぼした時刻がまとめて発火すると、本体(17:30)と
-    人物アルバム(7/13/19/21時)が同時に走り、写真.appのアルバム操作や
+    人物アルバム(7/13/19/22時)が同時に走り、写真.appのアルバム操作や
     台帳の read-modify-write が競合する。
     """
     # 親プロセスが既にロックを持っている場合（sync_photos.py が
@@ -261,7 +261,7 @@ def album_member_names(con: sqlite3.Connection, title: str) -> set[str]:
 class PersonPhoto:
     """指定人物が「いる」と写真.appが判断した写真1枚ぶんの評価結果。"""
     name: str            # 元ファイル名（写真.app内はUUID名になるため元名に戻す）
-    face_px: float       # その人物の顔の幅。長辺基準の実ピクセル。顔なしは0
+    face_px: float       # その人物の顔の幅。画像の幅基準の実ピクセル。顔なしは0
     face_ratio: float    # 写真内で最大の顔に対する比。1.0 ならその人物が最大
     faces: int           # 写真内の検出数（顔＋胴体のみ）
     detections: int      # うちその人物に紐づく検出数
@@ -282,15 +282,15 @@ class Thresholds:
     """顔の写り方の閾値。config.json で調整できる。"""
     min_px: int = 25          # 顔の幅がこれ以上なら採用
     min_ratio: float = 0.6    # 大きく写っていても、最大の顔のこの比未満なら脇役
-    main_ratio: float = 1.0   # 小さくても、写真内で最大の顔のこの比以上なら採用
-    max_people: int = 0       # 上の救済を使う条件。検出人数の上限（0で無制限）
+    main_ratio: float = 0.8   # 小さくても、写真内で最大の顔のこの比以上なら採用
+    max_people: int = 5       # 上の救済を使う条件。検出人数の上限（0で無制限）
 
     @classmethod
     def from_config(cls, cfg: dict) -> "Thresholds":
         return cls(int(cfg.get("face_min_px", 25)),
                    float(cfg.get("face_min_ratio", 0.6)),
-                   float(cfg.get("face_main_ratio", 1.0)),
-                   int(cfg.get("face_max_people", 0)))
+                   float(cfg.get("face_main_ratio", 0.8)),
+                   int(cfg.get("face_max_people", 5)))
 
     def judge(self, face_px: float, face_ratio: float, faces: int) -> str:
         """採用なら ""、不採用ならその理由を返す。

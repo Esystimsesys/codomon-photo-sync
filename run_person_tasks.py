@@ -10,9 +10,9 @@
   ファイルを読もうとして書類フォルダのTCC保護に阻まれる（Operation not permitted）。
   venv の python を直接 ProgramArguments に指定する形なら通る。
 
-みてねのセッションは約2週間で切れる。切れた場合はアップロードだけが失敗し、
+みてねのセッションが切れた場合はアップロードだけが失敗し、
 人物アルバムの更新は成功したまま残る（意図的な設計）。
-復旧するには: .venv/bin/python3 mitene_upload.py --login
+復旧するには: python3 setup.py mitene
 """
 import subprocess
 import sys

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import plistlib
@@ -41,6 +42,16 @@ KEYCHAIN_USER = "codomon-photo-sync-user"
 KEYCHAIN_PASS = "codomon-photo-sync-pass"
 
 MIN_PYTHON = (3, 11)
+# 古い python3 で起動されたときに探す版。依存パッケージの動作を確認済みのものに限る。
+PYTHON_CANDIDATES = ("3.14", "3.13", "3.12", "3.11")
+# PATH に載っていなくても探す場所。brew の python@3.x と uv はどちらも
+# python3.13 のような版付きの名前しか置かず、python3 は 3.9 のまま残る。
+PYTHON_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", str(Path.home() / ".local" / "bin"))
+REEXEC_ENV = "CODOMON_SETUP_REEXEC"
+
+FDA_HINT = ("システム設定 → プライバシーとセキュリティ → フルディスクアクセス で\n"
+            "setup.py を実行したアプリ（ターミナル / iTerm / VS Code など）をオンにし、\n"
+            "そのアプリを一度終了して開き直してください")
 
 # ラベルにユーザー名を入れない。個人情報を含めずに済むうえ、
 # config.json の job_labels と食い違う余地も減る。
@@ -103,6 +114,18 @@ def ask(prompt: str, default: str = "") -> str:
     except EOFError:
         return default
     return got or default
+
+
+def ask_int(prompt: str, default: int) -> int:
+    while True:
+        got = ask(prompt, str(default))
+        try:
+            n = int(got)
+        except ValueError:
+            n = 0
+        if n > 0:
+            return n
+        say("  1 以上の数字で入力してください")
 
 
 def interactive_tty() -> bool:
@@ -276,11 +299,49 @@ def check_python() -> tuple[bool, str, str]:
     label = f"Python {v.major}.{v.minor}.{v.micro}"
     if (v.major, v.minor) < MIN_PYTHON:
         return (False, label,
-                f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} 以降が必要です"
-                "（macOS 標準の python3 は 3.9 のため別途用意します）\n"
-                "brew install python@3.13\n"
-                "または  uv python install 3.13")
+                f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} 以降が見つかりません"
+                "（macOS 標準の python3 は 3.9 です）。次のどちらかで入れてから、\n"
+                "もう一度 python3 setup.py を実行してください（新しい Python は自動で見つけます）。\n"
+                "  curl -LsSf https://astral.sh/uv/install.sh | sh\n"
+                "  ~/.local/bin/uv python install 3.13\n"
+                "Homebrew を使っている場合は  brew install python@3.13  でも構いません。")
     return True, label, ""
+
+
+def find_python() -> str | None:
+    """要件を満たす Python を探す。見つからなければ None。"""
+    path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+    search = os.pathsep.join([*path_dirs, *PYTHON_DIRS])
+    for ver in PYTHON_CANDIDATES:
+        exe = shutil.which(f"python{ver}", path=search)
+        if not exe:
+            continue
+        try:
+            r = run([exe, "-c", "import sys; print(sys.version_info[:2] >= (3, 11))"],
+                    timeout=15)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if r.returncode == 0 and r.stdout.strip() == "True":
+            return exe
+    return None
+
+
+def reexec_with_newer_python() -> None:
+    """古い python3 で起動されたら、新しい Python で自分を起動し直す。
+
+    README の手順で Python を入れても、brew と uv は python3 を置き換えない。
+    利用者に「python3.13 setup.py と打ち直して」と頼むより、ここで拾うほうが確実。
+    """
+    if sys.version_info[:2] >= MIN_PYTHON or os.environ.get(REEXEC_ENV):
+        return
+    exe = find_python()
+    if not exe:
+        return          # check_python() が導入方法を案内する
+    v = sys.version_info
+    say(f"python3 が {v.major}.{v.minor} のため、{exe} で実行します。")
+    sys.stdout.flush()      # execv はバッファを捨てるため
+    os.environ[REEXEC_ENV] = "1"
+    os.execv(exe, [exe, str(Path(__file__).resolve()), *sys.argv[1:]])
 
 
 def check_venv() -> tuple[bool, str, str]:
@@ -320,7 +381,7 @@ def check_config() -> tuple[bool, str, str]:
 def check_keychain() -> tuple[bool, str, str]:
     missing = [s for s in (KEYCHAIN_USER, KEYCHAIN_PASS)
                if run(["security", "find-generic-password",
-                       "-a", os.environ.get("USER", ""), "-s", s]).returncode != 0]
+                       "-a", getpass.getuser(), "-s", s]).returncode != 0]
     if missing:
         return False, "コドモンの認証情報が未登録", "python3 setup.py install で登録できます"
     return True, "コドモンの認証情報（Keychain）", ""
@@ -338,10 +399,20 @@ def check_full_disk_access() -> tuple[bool, str, str]:
         con.execute("select 1 from ZGENERICALBUM limit 1").fetchone()
         con.close()
     except sqlite3.Error:
-        return (False, "フルディスクアクセスがありません",
-                "システム設定 → プライバシーとセキュリティ → フルディスクアクセス で\n"
-                "     実行元（ターミナル / VS Code など）を許可してください")
+        return (False, "フルディスクアクセスがありません", FDA_HINT)
     return True, "フルディスクアクセス", ""
+
+
+def fda_hint_for_jobs() -> str:
+    """定期実行から写真ライブラリを読めないときの案内。
+
+    launchd から起動したプロセスには、ターミナルに与えた許可は及ばない。
+    """
+    real = VENV_PY.resolve() if VENV_PY.exists() else VENV_PY
+    return ("定期実行の Python にフルディスクアクセスがありません。\n"
+            "システム設定 → プライバシーとセキュリティ → フルディスクアクセス で「+」を押し、\n"
+            "⌘⇧G で次のパスを入力して追加してください:\n"
+            f"  {real}")
 
 
 def check_album(cfg: dict) -> tuple[bool | None, str, str]:
@@ -395,11 +466,29 @@ def check_jobs() -> list[tuple[bool | None, str, str]]:
             rows.append((True, f"{label}", ""))
         elif code == "78":
             rows.append((False, f"{label} が EX_CONFIG(78) で失敗",
-                         "ログを開けていません。python3 setup.py schedule で登録し直してください"))
+                         "launchd がプログラムを起動できませんでした。\n"
+                         "python3 setup.py schedule で登録し直してください"
+                         "（直らなければ docs/03-operations.md のトラブルシュート）"))
+        elif any(m in err_log_tail(JOBS[label]) for m in FDA_ERROR_MARKS):
+            rows.append((False, f"{label} が写真ライブラリを読めずに失敗", fda_hint_for_jobs()))
         else:
             rows.append((False, f"{label} が終了コード {code} で失敗",
-                         f"{LOG_DIR}/ のログを確認してください"))
+                         f"{LOG_DIR}/{JOBS[label]['log']}.err.log と sync.log を確認してください"))
     return rows
+
+
+# 定期実行で写真ライブラリを読めなかったときにエラーログへ残る文言
+FDA_ERROR_MARKS = ("写真ライブラリを開けません", "unable to open database file")
+
+
+def err_log_tail(spec: dict, size: int = 4096) -> str:
+    path = LOG_DIR / f"{spec['log']}.err.log"
+    try:
+        with path.open("rb") as f:
+            f.seek(max(0, path.stat().st_size - size))
+            return f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 # ---------------------------------------------------------------- doctor
@@ -491,14 +580,14 @@ def setup_config(interactive: bool) -> dict:
         say("")
         say("  顔認識で特定の子どもだけを抽出できます（任意）。")
         say("  使う場合は、写真.appの「ピープル」で先に名前を付けておいてください。")
-        say("  使わない場合は空のまま Enter を押してください。")
+        say("  使わない場合は空のまま Enter を押してください（あとから設定できます）。")
         cfg["person"] = ask("  子どもの名前（写真.appのピープルと同じ表記）",
                             cfg.get("person") or "")
         say("")
         cfg["save_root"] = ask("  写真と記録の保存先",
                                cfg.get("save_root") or defaults.get("save_root", "~/Pictures/codomon"))
-        cfg["days_to_check"] = int(ask("  毎回さかのぼる日数",
-                                       str(cfg.get("days_to_check") or 30)) or 30)
+        cfg["days_to_check"] = ask_int("  毎回さかのぼる日数",
+                                       int(cfg.get("days_to_check") or 30))
     else:
         for k, v in defaults.items():
             cfg.setdefault(k, v)
@@ -525,7 +614,7 @@ def setup_keychain(interactive: bool) -> None:
     say("")
     say("  コドモンのログイン情報を Keychain に登録します。")
     say("  入力した値は画面に表示されず、シェルの履歴にも残りません。")
-    user = os.environ.get("USER", "")
+    user = getpass.getuser()
     for service, what in ((KEYCHAIN_USER, "メールアドレス"), (KEYCHAIN_PASS, "パスワード")):
         say(f"\n  コドモンの{what}を入力してください:")
         r = subprocess.run(["security", "add-generic-password",
@@ -590,21 +679,23 @@ def cmd_install(args) -> int:
     head("4. コドモンの認証情報")
     setup_keychain(interactive)
 
-    head("5. フルディスクアクセス")
-    ok, label, hint = check_full_disk_access()
-    say(f"  {OK if ok else NG} {label}")
-    if not ok:
-        for line in hint.splitlines():
-            say(f"     {line}")
-        say("     ※ 顔認識を使わない場合は不要です")
+    head("5. フルディスクアクセス（顔認識を使う場合のみ）")
+    if not (cfg.get("person") or "").strip():
+        say(f"  {SKIP} 顔認識を使わないので不要です")
+    else:
+        ok, label, hint = check_full_disk_access()
+        say(f"  {OK if ok else NG} {label}")
+        if not ok:
+            for line in hint.splitlines():
+                say(f"     {line}")
+            say("     許可したあと python3 setup.py doctor で確認できます")
 
     if cmd_schedule(argparse.Namespace(quiet=True)) != 0:
         say(f"  {NG} 定期実行の登録に失敗しました。修正後に setup.py schedule を実行してください")
         return 1
 
     head("完了")
-    say("  動作を確認するには:")
-    say(f"    {VENV_PY} sync_photos.py")
+    say("  以降は定期実行で自動的に取得されます。")
     say("  状態をまとめて確認するには:")
     say("    python3 setup.py doctor")
     if cfg.get("person"):
@@ -613,7 +704,12 @@ def cmd_install(args) -> int:
 
     if interactive and confirm("\n  いま初回の取得を実行しますか？", True):
         say("")
+        say("  「“写真”を制御するアクセスを求めています」と表示されたら「OK」を押してください。")
+        say("")
         subprocess.run([str(VENV_PY), str(HERE / "sync_photos.py")])
+    else:
+        say("  手動で取得するには:")
+        say("    .venv/bin/python3 sync_photos.py")
     return 0
 
 
@@ -631,6 +727,11 @@ def cmd_mitene(args) -> int:
         say("     先に写真.appのピープルで名前を付け、その名前を person に設定してください。")
         return 1
 
+    # 初回かどうかはログインの前に判定する（ログインするとセッションができるため）。
+    # 台帳は最初の送信が成功するまで作られないので、台帳の有無だけでは判定できない。
+    session, ledger = HERE / "mitene_state.json", HERE / "mitene_uploaded.json"
+    relogin = session.exists() or ledger.exists()
+
     say("  ブラウザが開きます。みてねにログインしてください（2要素認証も画面で入力します）。")
     say("  ログイン後、画面はそのままで構いません。自動で閉じます。")
     say("")
@@ -639,11 +740,23 @@ def cmd_mitene(args) -> int:
         say(f"\n  {NG} ログインできませんでした")
         return 1
 
+    # 再ログインのときに記録し直すと、失効中にたまった未送信の写真まで
+    # 「送信済み」になり、二度と送られなくなる。初回だけ尋ねる。
+    if relogin:
+        say(f"\n  {OK} 再ログインしました。未送信の写真は次の定期実行で送られます。")
+        return 0
+
     say("")
-    say("  すでに手作業でみてねへ上げた写真がある場合、いま『送信済み』として")
-    say("  記録しておくと、二重に送られるのを防げます（送信は行いません）。")
-    if args.yes or confirm("  現時点の対象を『送信済み』として記録しますか？", True):
+    say("  いま写真.appにある対象の写真をどう扱うかを選びます。")
+    say("    はい  : 今ある写真は送らず、これから届く写真だけを送る")
+    say("            （手作業でみてねへ上げ済みの写真と二重にならない）")
+    say("    いいえ: 今ある写真も、次の定期実行でまとめて送る")
+    if args.yes or confirm("  今ある写真を送らずにおきますか？", True):
         subprocess.run([str(VENV_PY), str(HERE / "mitene_upload.py"), "--seed"])
+    elif not ledger.exists():
+        # 「送る」を選んだことを残す。セッションファイルが消えても初回と誤認しない。
+        ledger.write_text("[]\n", encoding="utf-8")
+        os.chmod(ledger, 0o644)
     say(f"\n  {OK} みてね連携を設定しました。以降は定期実行の中で自動送信されます。")
     return 0
 
@@ -654,6 +767,8 @@ def cmd_uninstall(args) -> int:
     head("撤去")
     cfg = load_config()
     save_root = Path(cfg.get("save_root") or "~/Pictures/codomon").expanduser()
+    # export_person.py を手で実行したときの書き出し先（export_person.DEST_ROOT と同じ規則）
+    person_root = save_root.parent / f"{save_root.name}-person"
 
     say("  定期実行を解除します（この操作は常に行います）。")
     for label in JOBS:
@@ -676,7 +791,8 @@ def cmd_uninstall(args) -> int:
         ("state", "セッション・台帳・設定（config.json / mitene_state.json ほか）", args.state),
         ("keychain", "Keychain のコドモン認証情報", args.keychain),
         ("venv", f"仮想環境（{VENV}）", args.venv),
-        ("photos", f"取得した写真と記録（{save_root}）", args.photos),
+        ("photos", f"取得した写真と記録（{save_root}）"
+         + (f"と {person_root}" if person_root.exists() else ""), args.photos),
     ]
     interactive = not any(flag for _, _, flag in targets) and not args.yes
     if interactive and not interactive_tty():
@@ -705,22 +821,28 @@ def cmd_uninstall(args) -> int:
         elif key == "state":
             for name in ("config.json", "mitene_state.json", "storage_state.json",
                          "mitene_uploaded.json", "photos_skip.json",
-                         ".last_session_refresh", ".job.lock", "sync.log", "sync.log.1"):
+                         ".last_session_refresh", ".job.lock", "sync.log", "sync.log.1",
+                         "login_failed.png"):
                 (HERE / name).unlink(missing_ok=True)
         elif key == "keychain":
-            user = os.environ.get("USER", "")
+            user = getpass.getuser()
             for s in (KEYCHAIN_USER, KEYCHAIN_PASS):
                 run(["security", "delete-generic-password", "-a", user, "-s", s])
         elif key == "venv":
             shutil.rmtree(VENV, ignore_errors=True)
         elif key == "photos":
             shutil.rmtree(save_root, ignore_errors=True)
+            shutil.rmtree(person_root, ignore_errors=True)
         say(f"  {OK} {label} を削除しました")
 
     say("")
-    say("  写真.app に取り込んだ写真とアルバムはそのままです。")
-    say("  不要なら写真.app のアルバム一覧から手で削除してください")
-    say("  （AppleScript ではアルバムから写真を外せないため、自動化していません）。")
+    say("  次のものは残っています。不要なら手で削除してください（README の「アンインストール」）。")
+    say("  - 写真.app のアルバムと、取り込んだ写真")
+    say("    アルバムを削除しても写真はライブラリに残ります。写真ごと消すときは、")
+    say("    先にアルバムを開いて全選択し、削除してください")
+    say("  - ブラウザ Chromium（~/Library/Caches/ms-playwright）")
+    say("    Playwright を使うほかのツールと共用のため、自動では消しません")
+    say(f"  - このフォルダ（{HERE}）")
     return 0
 
 
@@ -790,6 +912,7 @@ def main() -> int:
     p.add_argument("--yes", action="store_true", help="確認を求めない（明示した対象のみ削除）")
 
     args = ap.parse_args()
+    reexec_with_newer_python()
     if not args.cmd:
         return cmd_menu(args)
     for name in ("yes", "quiet", "logs", "state", "keychain", "venv", "photos"):

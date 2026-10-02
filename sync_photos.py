@@ -17,10 +17,7 @@
   購入が必要な「写真共有・販売」には一切アクセスしない（自動課金を避けるため）。
 
 セットアップ:
-  python3 -m venv .venv && .venv/bin/pip install playwright
-  .venv/bin/playwright install chromium
-  security add-generic-password -a "$USER" -s codomon-photo-sync-user -w
-  security add-generic-password -a "$USER" -s codomon-photo-sync-pass -w
+  python3 setup.py（仮想環境・依存パッケージ・Keychain 登録・定期実行をまとめて行う）
 
 実行:
   .venv/bin/python3 sync_photos.py
@@ -677,7 +674,7 @@ def _guarded() -> int:
     """排他ロックを取ってから実行する。
 
     launchd はラベルが違うジョブの同時実行を防がない。スリープ復帰時に
-    17:30 と 7/13/19/21 時の分がまとめて発火すると両方が走り、
+    17:30 と 7/13/19/22 時の分がまとめて発火すると両方が走り、
     写真.appのアルバム操作や台帳の read-modify-write が競合する。
     """
     harden_umask()
