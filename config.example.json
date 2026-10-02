@@ -15,6 +15,7 @@
   "_job_labels": "死活監視の対象となる launchd のラベル。setup.py が自動で書き込むため、手で書く必要はありません。",
   "face_min_px": 25,
   "face_min_ratio": 0.6,
-  "face_main_ratio": 1.0,
-  "face_max_people": 0
+  "face_main_ratio": 0.8,
+  "face_max_people": 5,
+  "_face": "顔の写り方の閾値。考え方は docs/04-face-recognition.md を参照してください。"
 }

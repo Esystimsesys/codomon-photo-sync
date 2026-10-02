@@ -39,8 +39,8 @@ def load_config() -> dict:
         # 顔の写り方でみてねへ送るかを決める閾値。詳細は docs/04-face-recognition.md
         "face_min_px": 25,        # 顔の幅がこれ以上なら採用（配信画像は幅500px固定）
         "face_min_ratio": 0.6,    # 大きく写っていても、最大の顔のこの比未満なら脇役として除外
-        "face_main_ratio": 1.0,   # 顔が小さくても、写真内で最大の顔のこの比以上なら採用
-        "face_max_people": 0,     # 上の救済を使う条件。写真内の検出人数の上限（0で無制限）
+        "face_main_ratio": 0.8,   # 顔が小さくても、写真内で最大の顔のこの比以上なら採用
+        "face_max_people": 5,     # 上の救済を使う条件。写真内の検出人数の上限（0で無制限）
         # 死活監視の対象。setup.py が登録したジョブと一致させる（手で書かない）
         "job_labels": ["com.codomon-photo-sync.sync",
                        "com.codomon-photo-sync.person",
@@ -282,15 +282,15 @@ class Thresholds:
     """顔の写り方の閾値。config.json で調整できる。"""
     min_px: int = 25          # 顔の幅がこれ以上なら採用
     min_ratio: float = 0.6    # 大きく写っていても、最大の顔のこの比未満なら脇役
-    main_ratio: float = 1.0   # 小さくても、写真内で最大の顔のこの比以上なら採用
-    max_people: int = 0       # 上の救済を使う条件。検出人数の上限（0で無制限）
+    main_ratio: float = 0.8   # 小さくても、写真内で最大の顔のこの比以上なら採用
+    max_people: int = 5       # 上の救済を使う条件。検出人数の上限（0で無制限）
 
     @classmethod
     def from_config(cls, cfg: dict) -> "Thresholds":
         return cls(int(cfg.get("face_min_px", 25)),
                    float(cfg.get("face_min_ratio", 0.6)),
-                   float(cfg.get("face_main_ratio", 1.0)),
-                   int(cfg.get("face_max_people", 0)))
+                   float(cfg.get("face_main_ratio", 0.8)),
+                   int(cfg.get("face_max_people", 5)))
 
     def judge(self, face_px: float, face_ratio: float, faces: int) -> str:
         """採用なら ""、不採用ならその理由を返す。
