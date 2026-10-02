@@ -41,6 +41,12 @@ KEYCHAIN_USER = "codomon-photo-sync-user"
 KEYCHAIN_PASS = "codomon-photo-sync-pass"
 
 MIN_PYTHON = (3, 11)
+# 古い python3 で起動されたときに探す版。依存パッケージの動作を確認済みのものに限る。
+PYTHON_CANDIDATES = ("3.14", "3.13", "3.12", "3.11")
+# PATH に載っていなくても探す場所。brew の python@3.x と uv はどちらも
+# python3.13 のような版付きの名前しか置かず、python3 は 3.9 のまま残る。
+PYTHON_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", str(Path.home() / ".local" / "bin"))
+REEXEC_ENV = "CODOMON_SETUP_REEXEC"
 
 # ラベルにユーザー名を入れない。個人情報を含めずに済むうえ、
 # config.json の job_labels と食い違う余地も減る。
@@ -276,11 +282,49 @@ def check_python() -> tuple[bool, str, str]:
     label = f"Python {v.major}.{v.minor}.{v.micro}"
     if (v.major, v.minor) < MIN_PYTHON:
         return (False, label,
-                f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} 以降が必要です"
-                "（macOS 標準の python3 は 3.9 のため別途用意します）\n"
-                "brew install python@3.13\n"
-                "または  uv python install 3.13")
+                f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} 以降が見つかりません"
+                "（macOS 標準の python3 は 3.9 です）。次のどちらかで入れてから、\n"
+                "もう一度 python3 setup.py を実行してください（新しい Python は自動で見つけます）。\n"
+                "  curl -LsSf https://astral.sh/uv/install.sh | sh\n"
+                "  ~/.local/bin/uv python install 3.13\n"
+                "Homebrew を使っている場合は  brew install python@3.13  でも構いません。")
     return True, label, ""
+
+
+def find_python() -> str | None:
+    """要件を満たす Python を探す。見つからなければ None。"""
+    path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+    search = os.pathsep.join([*path_dirs, *PYTHON_DIRS])
+    for ver in PYTHON_CANDIDATES:
+        exe = shutil.which(f"python{ver}", path=search)
+        if not exe:
+            continue
+        try:
+            r = run([exe, "-c", "import sys; print(sys.version_info[:2] >= (3, 11))"],
+                    timeout=15)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if r.returncode == 0 and r.stdout.strip() == "True":
+            return exe
+    return None
+
+
+def reexec_with_newer_python() -> None:
+    """古い python3 で起動されたら、新しい Python で自分を起動し直す。
+
+    README の手順で Python を入れても、brew と uv は python3 を置き換えない。
+    利用者に「python3.13 setup.py と打ち直して」と頼むより、ここで拾うほうが確実。
+    """
+    if sys.version_info[:2] >= MIN_PYTHON or os.environ.get(REEXEC_ENV):
+        return
+    exe = find_python()
+    if not exe:
+        return          # check_python() が導入方法を案内する
+    v = sys.version_info
+    say(f"python3 が {v.major}.{v.minor} のため、{exe} で実行します。")
+    sys.stdout.flush()      # execv はバッファを捨てるため
+    os.environ[REEXEC_ENV] = "1"
+    os.execv(exe, [exe, str(Path(__file__).resolve()), *sys.argv[1:]])
 
 
 def check_venv() -> tuple[bool, str, str]:
@@ -790,6 +834,7 @@ def main() -> int:
     p.add_argument("--yes", action="store_true", help="確認を求めない（明示した対象のみ削除）")
 
     args = ap.parse_args()
+    reexec_with_newer_python()
     if not args.cmd:
         return cmd_menu(args)
     for name in ("yes", "quiet", "logs", "state", "keychain", "venv", "photos"):
