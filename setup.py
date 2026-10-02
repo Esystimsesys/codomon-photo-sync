@@ -675,6 +675,11 @@ def cmd_mitene(args) -> int:
         say("     先に写真.appのピープルで名前を付け、その名前を person に設定してください。")
         return 1
 
+    # 初回かどうかはログインの前に判定する（ログインするとセッションができるため）。
+    # 台帳は最初の送信が成功するまで作られないので、台帳の有無だけでは判定できない。
+    session, ledger = HERE / "mitene_state.json", HERE / "mitene_uploaded.json"
+    relogin = session.exists() or ledger.exists()
+
     say("  ブラウザが開きます。みてねにログインしてください（2要素認証も画面で入力します）。")
     say("  ログイン後、画面はそのままで構いません。自動で閉じます。")
     say("")
@@ -683,11 +688,23 @@ def cmd_mitene(args) -> int:
         say(f"\n  {NG} ログインできませんでした")
         return 1
 
+    # 再ログインのときに記録し直すと、失効中にたまった未送信の写真まで
+    # 「送信済み」になり、二度と送られなくなる。初回だけ尋ねる。
+    if relogin:
+        say(f"\n  {OK} 再ログインしました。未送信の写真は次の定期実行で送られます。")
+        return 0
+
     say("")
-    say("  すでに手作業でみてねへ上げた写真がある場合、いま『送信済み』として")
-    say("  記録しておくと、二重に送られるのを防げます（送信は行いません）。")
-    if args.yes or confirm("  現時点の対象を『送信済み』として記録しますか？", True):
+    say("  いま写真.appにある対象の写真をどう扱うかを選びます。")
+    say("    はい  : 今ある写真は送らず、これから届く写真だけを送る")
+    say("            （手作業でみてねへ上げ済みの写真と二重にならない）")
+    say("    いいえ: 今ある写真も、次の定期実行でまとめて送る")
+    if args.yes or confirm("  今ある写真を送らずにおきますか？", True):
         subprocess.run([str(VENV_PY), str(HERE / "mitene_upload.py"), "--seed"])
+    elif not ledger.exists():
+        # 「送る」を選んだことを残す。セッションファイルが消えても初回と誤認しない。
+        ledger.write_text("[]\n", encoding="utf-8")
+        os.chmod(ledger, 0o644)
     say(f"\n  {OK} みてね連携を設定しました。以降は定期実行の中で自動送信されます。")
     return 0
 

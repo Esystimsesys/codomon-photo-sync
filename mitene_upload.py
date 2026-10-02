@@ -10,7 +10,8 @@
 認証:
   reCAPTCHA と2要素認証（OTP）があるため**自動ログインはできない**。
   --login で画面を出して手動ログインし、セッションを保存して使い回す。
-  セッションの寿命は実測で約2週間。切れたら再度 --login が必要。
+  セッションは最終アクセスから14日のスライド式で、毎回の実行で延びる。
+  切れたら python3 setup.py mitene で再ログインする。
 
 アップロード済みの管理:
   みてね側のデータは一切参照せず、ローカルの台帳（mitene_uploaded.json）で管理する。
@@ -58,7 +59,7 @@ SCOPE_DEFAULT = _CFG["mitene_scope"]
 
 # 失効時にユーザーが打つコマンド。メッセージ内で必ず案内する。
 # 設置場所は人によって違うので、実行中のファイル位置から組み立てる。
-RECOVER_CMD = f"cd {HERE} && .venv/bin/python3 mitene_upload.py --login"
+RECOVER_CMD = f"cd {HERE} && python3 setup.py mitene"
 
 
 def log(message: str) -> None:
@@ -266,7 +267,7 @@ def main() -> int:
         # みてね連携は任意。一度もログインしていない環境で毎回失敗扱いにすると、
         # 使っていない人のジョブが1日4回赤くなり続ける。
         log("みてね連携は未設定のためスキップしました"
-            f"（使う場合: cd {HERE} && .venv/bin/python3 setup.py mitene）")
+            f"（使う場合: cd {HERE} && python3 setup.py mitene）")
         return 0
 
     files = person_files(args.person)
