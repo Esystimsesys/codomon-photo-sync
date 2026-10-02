@@ -91,7 +91,7 @@ def job_lock(timeout_note: str = ""):
 
     launchd は同一ラベルの多重起動は防ぐが、ラベルの違う2ジョブは防がない。
     スリープ復帰時に取りこぼした時刻がまとめて発火すると、本体(17:30)と
-    人物アルバム(7/13/19/21時)が同時に走り、写真.appのアルバム操作や
+    人物アルバム(7/13/19/22時)が同時に走り、写真.appのアルバム操作や
     台帳の read-modify-write が競合する。
     """
     # 親プロセスが既にロックを持っている場合（sync_photos.py が
@@ -261,7 +261,7 @@ def album_member_names(con: sqlite3.Connection, title: str) -> set[str]:
 class PersonPhoto:
     """指定人物が「いる」と写真.appが判断した写真1枚ぶんの評価結果。"""
     name: str            # 元ファイル名（写真.app内はUUID名になるため元名に戻す）
-    face_px: float       # その人物の顔の幅。長辺基準の実ピクセル。顔なしは0
+    face_px: float       # その人物の顔の幅。画像の幅基準の実ピクセル。顔なしは0
     face_ratio: float    # 写真内で最大の顔に対する比。1.0 ならその人物が最大
     faces: int           # 写真内の検出数（顔＋胴体のみ）
     detections: int      # うちその人物に紐づく検出数

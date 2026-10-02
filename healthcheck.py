@@ -26,7 +26,7 @@ HERE = Path(__file__).parent
 SYNC_LOG = HERE / "sync.log"
 HEALTH_LOG = Path.home() / "Library/Logs/codomon-photo-sync/health.log"
 
-# launchd のラベルにはユーザー名が含まれるため、ソースに直書きせず設定から読む
+# 監視対象のラベルは setup.py が登録時に config.json へ書く。登録したものと必ず一致させるため設定から読む
 JOBS: list[str] = load_config()["job_labels"]
 
 # ジョブは 7/13/17:30/19/21/22 時に走る。最長の間隔は 22:00→翌07:00 の9時間。
