@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import plistlib
@@ -47,6 +48,10 @@ PYTHON_CANDIDATES = ("3.14", "3.13", "3.12", "3.11")
 # python3.13 のような版付きの名前しか置かず、python3 は 3.9 のまま残る。
 PYTHON_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", str(Path.home() / ".local" / "bin"))
 REEXEC_ENV = "CODOMON_SETUP_REEXEC"
+
+FDA_HINT = ("システム設定 → プライバシーとセキュリティ → フルディスクアクセス で\n"
+            "setup.py を実行したアプリ（ターミナル / iTerm / VS Code など）をオンにし、\n"
+            "そのアプリを一度終了して開き直してください")
 
 # ラベルにユーザー名を入れない。個人情報を含めずに済むうえ、
 # config.json の job_labels と食い違う余地も減る。
@@ -109,6 +114,18 @@ def ask(prompt: str, default: str = "") -> str:
     except EOFError:
         return default
     return got or default
+
+
+def ask_int(prompt: str, default: int) -> int:
+    while True:
+        got = ask(prompt, str(default))
+        try:
+            n = int(got)
+        except ValueError:
+            n = 0
+        if n > 0:
+            return n
+        say("  1 以上の数字で入力してください")
 
 
 def interactive_tty() -> bool:
@@ -364,7 +381,7 @@ def check_config() -> tuple[bool, str, str]:
 def check_keychain() -> tuple[bool, str, str]:
     missing = [s for s in (KEYCHAIN_USER, KEYCHAIN_PASS)
                if run(["security", "find-generic-password",
-                       "-a", os.environ.get("USER", ""), "-s", s]).returncode != 0]
+                       "-a", getpass.getuser(), "-s", s]).returncode != 0]
     if missing:
         return False, "コドモンの認証情報が未登録", "python3 setup.py install で登録できます"
     return True, "コドモンの認証情報（Keychain）", ""
@@ -382,10 +399,20 @@ def check_full_disk_access() -> tuple[bool, str, str]:
         con.execute("select 1 from ZGENERICALBUM limit 1").fetchone()
         con.close()
     except sqlite3.Error:
-        return (False, "フルディスクアクセスがありません",
-                "システム設定 → プライバシーとセキュリティ → フルディスクアクセス で\n"
-                "     実行元（ターミナル / VS Code など）を許可してください")
+        return (False, "フルディスクアクセスがありません", FDA_HINT)
     return True, "フルディスクアクセス", ""
+
+
+def fda_hint_for_jobs() -> str:
+    """定期実行から写真ライブラリを読めないときの案内。
+
+    launchd から起動したプロセスには、ターミナルに与えた許可は及ばない。
+    """
+    real = VENV_PY.resolve() if VENV_PY.exists() else VENV_PY
+    return ("定期実行の Python にフルディスクアクセスがありません。\n"
+            "システム設定 → プライバシーとセキュリティ → フルディスクアクセス で「+」を押し、\n"
+            "⌘⇧G で次のパスを入力して追加してください:\n"
+            f"  {real}")
 
 
 def check_album(cfg: dict) -> tuple[bool | None, str, str]:
@@ -439,11 +466,29 @@ def check_jobs() -> list[tuple[bool | None, str, str]]:
             rows.append((True, f"{label}", ""))
         elif code == "78":
             rows.append((False, f"{label} が EX_CONFIG(78) で失敗",
-                         "ログを開けていません。python3 setup.py schedule で登録し直してください"))
+                         "launchd がプログラムを起動できませんでした。\n"
+                         "python3 setup.py schedule で登録し直してください"
+                         "（直らなければ docs/03-operations.md のトラブルシュート）"))
+        elif any(m in err_log_tail(JOBS[label]) for m in FDA_ERROR_MARKS):
+            rows.append((False, f"{label} が写真ライブラリを読めずに失敗", fda_hint_for_jobs()))
         else:
             rows.append((False, f"{label} が終了コード {code} で失敗",
-                         f"{LOG_DIR}/ のログを確認してください"))
+                         f"{LOG_DIR}/{JOBS[label]['log']}.err.log と sync.log を確認してください"))
     return rows
+
+
+# 定期実行で写真ライブラリを読めなかったときにエラーログへ残る文言
+FDA_ERROR_MARKS = ("写真ライブラリを開けません", "unable to open database file")
+
+
+def err_log_tail(spec: dict, size: int = 4096) -> str:
+    path = LOG_DIR / f"{spec['log']}.err.log"
+    try:
+        with path.open("rb") as f:
+            f.seek(max(0, path.stat().st_size - size))
+            return f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 # ---------------------------------------------------------------- doctor
@@ -535,14 +580,14 @@ def setup_config(interactive: bool) -> dict:
         say("")
         say("  顔認識で特定の子どもだけを抽出できます（任意）。")
         say("  使う場合は、写真.appの「ピープル」で先に名前を付けておいてください。")
-        say("  使わない場合は空のまま Enter を押してください。")
+        say("  使わない場合は空のまま Enter を押してください（あとから設定できます）。")
         cfg["person"] = ask("  子どもの名前（写真.appのピープルと同じ表記）",
                             cfg.get("person") or "")
         say("")
         cfg["save_root"] = ask("  写真と記録の保存先",
                                cfg.get("save_root") or defaults.get("save_root", "~/Pictures/codomon"))
-        cfg["days_to_check"] = int(ask("  毎回さかのぼる日数",
-                                       str(cfg.get("days_to_check") or 30)) or 30)
+        cfg["days_to_check"] = ask_int("  毎回さかのぼる日数",
+                                       int(cfg.get("days_to_check") or 30))
     else:
         for k, v in defaults.items():
             cfg.setdefault(k, v)
@@ -569,7 +614,7 @@ def setup_keychain(interactive: bool) -> None:
     say("")
     say("  コドモンのログイン情報を Keychain に登録します。")
     say("  入力した値は画面に表示されず、シェルの履歴にも残りません。")
-    user = os.environ.get("USER", "")
+    user = getpass.getuser()
     for service, what in ((KEYCHAIN_USER, "メールアドレス"), (KEYCHAIN_PASS, "パスワード")):
         say(f"\n  コドモンの{what}を入力してください:")
         r = subprocess.run(["security", "add-generic-password",
@@ -634,21 +679,23 @@ def cmd_install(args) -> int:
     head("4. コドモンの認証情報")
     setup_keychain(interactive)
 
-    head("5. フルディスクアクセス")
-    ok, label, hint = check_full_disk_access()
-    say(f"  {OK if ok else NG} {label}")
-    if not ok:
-        for line in hint.splitlines():
-            say(f"     {line}")
-        say("     ※ 顔認識を使わない場合は不要です")
+    head("5. フルディスクアクセス（顔認識を使う場合のみ）")
+    if not (cfg.get("person") or "").strip():
+        say(f"  {SKIP} 顔認識を使わないので不要です")
+    else:
+        ok, label, hint = check_full_disk_access()
+        say(f"  {OK if ok else NG} {label}")
+        if not ok:
+            for line in hint.splitlines():
+                say(f"     {line}")
+            say("     許可したあと python3 setup.py doctor で確認できます")
 
     if cmd_schedule(argparse.Namespace(quiet=True)) != 0:
         say(f"  {NG} 定期実行の登録に失敗しました。修正後に setup.py schedule を実行してください")
         return 1
 
     head("完了")
-    say("  動作を確認するには:")
-    say(f"    {VENV_PY} sync_photos.py")
+    say("  以降は定期実行で自動的に取得されます。")
     say("  状態をまとめて確認するには:")
     say("    python3 setup.py doctor")
     if cfg.get("person"):
@@ -657,7 +704,12 @@ def cmd_install(args) -> int:
 
     if interactive and confirm("\n  いま初回の取得を実行しますか？", True):
         say("")
+        say("  「“写真”を制御するアクセスを求めています」と表示されたら「OK」を押してください。")
+        say("")
         subprocess.run([str(VENV_PY), str(HERE / "sync_photos.py")])
+    else:
+        say("  手動で取得するには:")
+        say("    .venv/bin/python3 sync_photos.py")
     return 0
 
 

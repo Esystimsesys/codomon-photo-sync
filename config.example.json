@@ -1,7 +1,7 @@
 {
-  "_comment": "config.json にコピーして自分の環境に合わせて編集してください。config.json は .gitignore 済みです。",
-  "person": "子どもの名前",
-  "_person": "写真.appのピープルで付けた名前。この人物が写った写真だけを抽出・アップロードします。",
+  "_comment": "python3 setup.py が config.json を作るので、通常はこのファイルを編集する必要はありません。キーの意味は README の「設定」を参照してください。",
+  "person": "",
+  "_person": "写真.appのピープルで付けた名前。この人物が写った写真だけを抽出・アップロードします。空なら顔認識を使いません。",
   "album": "コドモン",
   "_album": "写真.appに作る全写真用アルバムの名前。",
   "person_album": null,
