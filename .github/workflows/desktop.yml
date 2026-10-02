@@ -1,0 +1,44 @@
+name: Desktop app checks and packages
+on:
+  pull_request:
+    paths: ['desktop/**', '.github/workflows/desktop.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+      - run: npm run browser:install
+      - run: npm run typecheck
+      - run: npm test
+      - run: npx playwright install chromium
+      - run: npm run test:ui
+      - run: npm run test:native
+      - run: npm run package:mac
+      - name: Smoke test the packaged app
+        run: |
+          packaged_app=$(find release -path '*/Contents/MacOS/おむかえフォト' -type f -print -quit)
+          CODOMON_PACKAGED_EXECUTABLE="$PWD/$packaged_app" node scripts/smoke-electron.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-${{ matrix.os }}
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.zip
+          retention-days: 14
+# This workflow creates reviewable artifacts only. Publishing to GitHub Releases is a separate explicit action.
