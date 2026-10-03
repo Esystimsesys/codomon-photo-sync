@@ -64,6 +64,13 @@ export async function inspectLegacy(directory: string, current: Settings): Promi
   settings.miteneEnabled=!!sessions.mitene;
   return {directory,settings,photos,posts,ledger,sessions};
 }
+export function launchdJobDisabled(output:string,label:string):boolean{
+  // macOS versions print either booleans or the words enabled/disabled.
+  // Match the full quoted label and value; an unknown/contradictory response stays active.
+  const states=[...output.matchAll(/^[ \t]*"([^"\r\n]+)"[ \t]*=>[ \t]*(true|false|disabled|enabled)[ \t]*[,;]?[ \t]*\r?$/gm)]
+    .filter(match=>match[1]===label).map(match=>match[2]);
+  return states.length>0&&states.every(state=>state==='true'||state==='disabled');
+}
 export async function legacyJobs(directory?:string):Promise<LegacyJob[]> {
   if(process.platform!=='darwin') return [];
   const root=join(homedir(),'Library/LaunchAgents');
@@ -81,7 +88,7 @@ export async function legacyJobs(directory?:string):Promise<LegacyJob[]> {
     let running=false, loaded=false;
     try{const output=(await exec('/bin/launchctl',['print',target],{timeout:10000})).stdout;loaded=true;running=/\bpid = \d+/.test(output);}catch{}
     let disabled=false;
-    try{disabled=(await exec('/bin/launchctl',['print-disabled',`gui/${process.getuid!()}`],{timeout:10000})).stdout.includes(`"${p.Label}" => true`);}catch{}
+    try{disabled=launchdJobDisabled((await exec('/bin/launchctl',['print-disabled',`gui/${process.getuid!()}`],{timeout:10000})).stdout,p.Label);}catch{}
     if(loaded || !disabled) result.push({label:p.Label,path,directory:dirname(script),running});
   }
   return result;

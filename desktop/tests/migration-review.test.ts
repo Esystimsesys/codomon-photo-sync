@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, symlink, rm, stat } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store, defaults, chosen, validateSettings } from '../src/main/store';
-import { inspectLegacy, legacyLedger, archivePathAllowed, pauseLegacy, type LegacyCommandRunner, type LegacyJob } from '../src/main/migration';
+import { inspectLegacy, legacyLedger, archivePathAllowed, pauseLegacy, launchdJobDisabled, type LegacyCommandRunner, type LegacyJob } from '../src/main/migration';
 import type { ArchivePhoto } from '../src/shared/types';
 import { Service, dayNow, type Connections } from '../src/main/service';
 
@@ -201,6 +201,24 @@ test('same-name legacy photos with differing bytes refuse migration and preserve
 
 const fixtureJob: LegacyJob = { label: 'com.codomon-photo-sync.person', path: '/fixture/job.plist', directory: '/fixture', running: false };
 function missingJob(): Error { return Object.assign(new Error('missing'), { code: 113, stderr: 'Could not find service in domain' }); }
+
+test('launchd disabled-state parser supports boolean and word formats with exact labels', () => {
+  const label='com.codomon-photo-sync.sync';
+  for(const state of ['true','disabled']) {
+    assert.equal(launchdJobDisabled(`disabled services = {\n\t"${label}" => ${state}\n}\n`,label),true);
+    assert.equal(launchdJobDisabled(`  "${label}"   =>\t${state},\r\n`,label),true);
+  }
+  for(const state of ['false','enabled','trueExtra','disabledExtra','1',''])
+    assert.equal(launchdJobDisabled(`"${label}" => ${state}\n`,label),false);
+  for(const other of [`${label}.other`,label.slice(0,-1),'comXcodomon-photo-syncXsync','com.unrelated.sync'])
+    assert.equal(launchdJobDisabled(`"${other}" => disabled\n`,label),false);
+  assert.equal(launchdJobDisabled(`"${label}.other" => disabled\n"${label}" => enabled\n`,label),false);
+  assert.equal(launchdJobDisabled(`"${label}" => true\n"${label}" => false\n`,label),false);
+  const labels=['com.codomon-photo-sync.sync','com.codomon-photo-sync.person','com.codomon-photo-sync.healthcheck'];
+  const multiline=`disabled services = {\n${labels.map(name=>`\t"${name}" => disabled`).join('\n')}\n}\n`;
+  for(const name of labels) assert.equal(launchdJobDisabled(multiline,name),true);
+  assert.equal(launchdJobDisabled('',label),false);
+});
 
 test('pause refuses stale running jobs after disabling and never boots them out', async () => {
   const commands: string[] = [];
