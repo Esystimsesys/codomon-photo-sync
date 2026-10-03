@@ -73,7 +73,7 @@ export class Service {
       if(pending.length){this.setProgress('写真.appに取り込んでいます');const result=await this.connectors.importIntoPhotos(s,pending);this.store.markImported(result.imported,result.errors);if(Object.keys(result.errors).length)errors.push(`${Object.keys(result.errors).length}枚の写真.app取り込みを確認できませんでした`);}
     }
     if(s.person){this.setProgress('写真.appの顔認識の結果を読み込んでいます');const faces=await this.connectors.analyzePhotos(s);this.store.applyFaces(faces);
-      if(this.connectors.updatePersonAlbum){try{await this.connectors.updatePersonAlbum(s,this.store.photos().filter(p=>p.imported&&(p.decision==='include'||p.decision==='auto'&&p.autoSelected)));}catch(e){errors.push(safeError(e));}}
+      if(s.importPhotos&&this.connectors.updatePersonAlbum){try{await this.connectors.updatePersonAlbum(s,this.store.photos().filter(p=>p.imported&&(p.decision==='include'||p.decision==='auto'&&p.autoSelected)));}catch(e){errors.push(safeError(e));}}
     }
     if(s.miteneEnabled&&this.vault.has('mitene')&&this.connectors.refreshMiteneSession&&this.store.get<string>('miteneRefresh')!==dayNow()){
       try{await this.connectors.refreshMiteneSession(this.session('mitene'),this.connectorOptions('mitene'));this.store.set('miteneRefresh',dayNow());}catch(e){errors.push(safeError(e));if(safeError(e).includes('再ログイン'))this.store.set('miteneNeedsLogin',true);}

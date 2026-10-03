@@ -48,6 +48,26 @@ test('review mode never sends during sync; automatic mode sends selected only an
     assert.equal(f.store.photo('second.jpeg')?.uploadState, 'pending');
   } finally { await f.close(); }
 });
+test('disabled Photos import preserves existing albums while read-only face selection and automatic sending remain available', async () => {
+  const f = await fixture({ person: '対象', importPhotos: false, sendMode: 'review' });
+  let imports = 0, albumWrites = 0;
+  try {
+    f.connections.importIntoPhotos = async () => { imports++; return { imported: [], errors: {} }; };
+    f.connections.updatePersonAlbum = async () => { albumWrites++; };
+    f.store.decide(['second.jpeg'], 'exclude');
+    assert.ok(f.store.photos().every(p => !p.imported), 'migration has not marked existing Photos assets imported');
+    await f.service.analyze();
+    assert.equal(imports, 0); assert.equal(albumWrites, 0);
+    assert.equal(f.store.photo('first.jpeg')?.autoSelected, true);
+    assert.deepEqual(f.store.eligible().map(p => p.id), ['first.jpeg', 'third.jpeg']);
+    assert.equal(f.uploads.length, 0);
+    f.store.saveSettings({ ...f.store.settings(), sendMode: 'automatic' });
+    await f.service.analyze();
+    assert.deepEqual(f.uploads, [['first.jpeg', 'third.jpeg']]);
+    assert.equal(imports, 0); assert.equal(albumWrites, 0);
+    assert.ok(f.store.photos().every(p => !p.imported));
+  } finally { await f.close(); }
+});
 test('explicit send is an intentional manual include even when face selection excludes or is pending', async () => {
   const f = await fixture();
   try {
