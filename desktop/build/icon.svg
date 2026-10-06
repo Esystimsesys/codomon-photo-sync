@@ -1,1 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><rect x="64" y="64" width="896" height="896" rx="202" fill="#315d47"/><rect x="222" y="235" width="580" height="570" rx="58" transform="rotate(7 512 520)" fill="#c7d1b3"/><rect x="214" y="201" width="580" height="570" rx="58" transform="rotate(-6 504 486)" fill="#faf7e9"/><path d="M507 640V444" stroke="#6e865b" stroke-width="26" stroke-linecap="round"/><path d="M504 525C370 529 332 434 357 370C442 365 511 430 504 525Z" fill="#6e865b"/><path d="M510 470C508 365 574 309 654 326C665 418 603 479 510 470Z" fill="#9ca76d"/><circle cx="683" cy="256" r="60" fill="#deb678"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="forest" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#49785e"/><stop offset="1" stop-color="#234d3c"/></linearGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="0.7" y2="1"><stop stop-color="#fffdf4"/><stop offset="1" stop-color="#f4efdc"/></linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#e7ecd8"/><stop offset="1" stop-color="#f1f0df"/></linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%"><feDropShadow dx="0" dy="20" stdDeviation="18" flood-color="#15392c" flood-opacity=".22"/></filter>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="202" fill="url(#forest)"/>
+  <rect x="66" y="66" width="892" height="892" rx="200" fill="none" stroke="#fff" stroke-opacity=".12" stroke-width="4"/>
+  <g filter="url(#shadow)">
+    <rect x="236" y="220" width="574" height="612" rx="54" transform="rotate(9 523 526)" fill="#b9c9a1"/>
+    <g transform="rotate(-7 502 502)">
+      <rect x="205" y="184" width="594" height="634" rx="54" fill="url(#paper)"/>
+      <rect x="247" y="226" width="510" height="464" rx="24" fill="url(#sky)"/>
+      <circle cx="666" cy="314" r="44" fill="#e5b568"/>
+      <path d="M500 634V460" fill="none" stroke="#426d4d" stroke-width="25" stroke-linecap="round"/>
+      <path d="M499 543C391 545 330 466 347 384C444 378 509 443 499 543Z" fill="#507950"/>
+      <path d="M508 482C502 386 559 338 631 350C645 431 588 490 508 482Z" fill="#89a46c"/>
+      <path d="M457 751H547" fill="none" stroke="#d1d8bf" stroke-width="12" stroke-linecap="round"/>
+    </g>
+  </g>
+</svg>

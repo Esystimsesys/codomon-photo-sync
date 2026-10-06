@@ -156,8 +156,8 @@ async function ready():Promise<void>{
   const allowed=(event:Electron.IpcMainInvokeEvent)=>{if(!window||event.sender!==window.webContents||event.senderFrame!==window.webContents.mainFrame||!event.senderFrame.url.startsWith('codomon-app://app/'))throw new Error('許可されていない画面です');};
   ipcMain.handle('snapshot',event=>{allowed(event);return service.snapshot();});
   ipcMain.handle('action',async(event,payload)=>{allowed(event);try{return await action(payload);}catch(e){throw new Error(safeError(e));}});
-  const icon=nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAIElEQVR42mNkYGD4z0ABYBw1gGE0DBgGDAwM/6mBAQAA//8DAERkAx2eVHdzAAAAAElFTkSuQmCC');icon.setTemplateImage(true);
-  tray=new Tray(icon);tray.setTitle('おむかえ');tray.setToolTip('おむかえフォト');tray.setContextMenu(Menu.buildFromTemplate([{label:'おむかえフォトを開く',click:showWindow},{label:'今すぐ同期',enabled:!demo&&!test,click:()=>{showWindow();void service.sync().catch(()=>{});}},{type:'separator'},{label:'終了',click:()=>app.quit()}]));
+  const icon=nativeImage.createFromPath(join(__dirname,'trayTemplate.png'));icon.setTemplateImage(true);
+  tray=new Tray(icon);tray.setToolTip('おむかえフォト');tray.setContextMenu(Menu.buildFromTemplate([{label:'おむかえフォトを開く',click:showWindow},{label:'今すぐ同期',enabled:!demo&&!test,click:()=>{showWindow();void service.sync().catch(()=>{});}},{type:'separator'},{label:'終了',click:()=>app.quit()}]));
   Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'おむかえフォト',submenu:[{role:'about'},{type:'separator'},{role:'hide'},{role:'unhide'},{type:'separator'},{role:'quit'}]},{role:'editMenu'},{role:'windowMenu'}]));
   showWindow();
   setInterval(()=>{void service.scheduled().catch(()=>{});},60_000).unref();

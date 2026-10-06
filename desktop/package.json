@@ -7,6 +7,7 @@
   "license": "MIT",
   "main": "dist/main/index.cjs",
   "scripts": {
+    "build:icons": "node scripts/build-icon.mjs",
     "typecheck": "tsc --noEmit",
     "build": "node scripts/build.mjs",
     "test": "tsx --test tests/*.test.ts",
