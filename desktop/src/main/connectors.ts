@@ -80,7 +80,7 @@ export function toText(value: unknown): string {
 }
 export function recordBody(item: Item): string {
   const rows = Array.isArray(item.data) ? item.data : [];
-  return [toText(item.overview || item.content), ...rows.filter(r => r && typeof r === 'object').map(r => `${r.name ?? r.title ?? r.item_name ?? ''} ${r.amount ?? r.price ?? r.total ?? ''}`.trim()).filter(Boolean)].filter(Boolean).join('\n');
+  return [toText(item.overview || item.content), ...rows.filter(r => r && typeof r === 'object').map(r => `${r.name ?? r.title ?? r.item_name ?? r.billing_item_name ?? ''} ${r.amount ?? r.price ?? r.total ?? ''}`.trim()).filter(Boolean)].filter(Boolean).join('\n');
 }
 export function stampExif(data: Buffer, item: Item): Buffer {
   if (data[0] !== 0xff || data[1] !== 0xd8) throw new Error('JPEG画像ではありません');
