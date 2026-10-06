@@ -230,9 +230,22 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
 function errorText(e: unknown): string { return e instanceof Error ? e.message : '処理に失敗しました'; }
 
 export function appleScriptString(text: string): string { return `"${text.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\r', '\\r').replaceAll('\n', '\\n')}"`; }
+// Fetch all names in one Apple Event. Iterating media items one by one sends an event per photo, and Photos
+// intermittently drops that connection midway (-609). -600/-609 also occur while Photos is launching or quitting.
+const PHOTOS_DISCONNECTED = /\((-600|-609)\)/;
 async function albumFilenames(album: string): Promise<Set<string>> {
-  const { stdout } = await exec('/usr/bin/osascript', ['-e', `with timeout of 1800 seconds\ntell application "Photos"\nif not (exists album ${appleScriptString(album)}) then return ""\nset out to ""\nrepeat with m in (media items in album ${appleScriptString(album)})\nset out to out & (filename of m) & linefeed\nend repeat\nreturn out\nend tell\nend timeout`], { timeout: 1_810_000, maxBuffer: 20 * 1024 * 1024 });
-  return new Set(stdout.split('\n').filter(Boolean));
+  const name = appleScriptString(album);
+  const script = `with timeout of 1800 seconds\ntell application "Photos"\nif not (exists album ${name}) then return ""\nset names to filename of every media item of album ${name}\nend tell\nend timeout\nset AppleScript's text item delimiters to linefeed\nreturn names as text`;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const { stdout } = await exec('/usr/bin/osascript', ['-e', script], { timeout: 1_810_000, maxBuffer: 20 * 1024 * 1024 });
+      return new Set(stdout.split('\n').filter(Boolean));
+    } catch (e) {
+      const disconnected = PHOTOS_DISCONNECTED.test(String((e as { stderr?: unknown }).stderr ?? (e as Error).message));
+      if (disconnected && attempt < 3) { await new Promise(resolve => setTimeout(resolve, attempt * 5_000)); continue; }
+      throw new Error(disconnected ? '写真.appとの接続が切れたため、アルバムの写真を確認できませんでした。次の自動実行で再試行します' : '写真.appのアルバムを読み取れません。写真.appとオートメーション権限を確認してください');
+    }
+  }
 }
 export async function importIntoPhotos(settings: Settings, photos: ArchivePhoto[]): Promise<{ imported: string[]; errors: Record<string, string> }> {
   if (process.platform !== 'darwin') throw new Error('写真.appへの取り込みはMacのみ対応しています');
