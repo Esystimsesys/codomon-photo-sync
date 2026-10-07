@@ -3,6 +3,8 @@ on:
   pull_request:
     paths: ['desktop/**', '.github/workflows/desktop.yml']
   workflow_dispatch:
+  push:
+    tags: ['v*']
 permissions:
   contents: read
 jobs:
@@ -22,6 +24,14 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: desktop/package-lock.json
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::タグ $GITHUB_REF_NAME と package.json の版番号 $version が一致しません"
+            exit 1
+          fi
       - run: npm ci
       - run: npm run browser:install
       - run: npm run typecheck
@@ -41,4 +51,45 @@ jobs:
             desktop/release/*.dmg
             desktop/release/*.zip
           retention-days: 14
-# This workflow creates reviewable artifacts only. Publishing to GitHub Releases is a separate explicit action.
+  # A tag push only drafts the release. Publishing stays a manual step after checking the DMG.
+  release:
+    needs: mac
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: mac-*
+          merge-multiple: true
+      - name: Draft the GitHub Release
+        run: |
+          tag="$GITHUB_REF_NAME"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            if [ "$(gh release view "$tag" --json isDraft -q .isDraft)" != "true" ]; then
+              echo "::error::$tag は公開済みです。ファイルを差し替えません"
+              exit 1
+            fi
+            gh release upload "$tag" dist/*.dmg dist/*.zip --clobber
+            exit 0
+          fi
+          cat > notes.md <<'NOTES'
+          ## 新しくなったこと
+          - （公開前に書く）
+
+          ## 直したこと
+          - （公開前に書く）
+
+          ## 注意
+          - 署名・公証をしていないため、初回は開発元を確認できない警告が出ます。配布元を確認してから、システム設定の「プライバシーとセキュリティ」で個別に許可してください。
+          - 更新後に「フルディスクアクセス」や写真.appの操作許可をやり直す必要がある場合があります。
+          - Apple Silicon の Mac は `arm64`、Intel の Mac は `x64` のファイルを使います。
+          NOTES
+          prerelease=""
+          case "$tag" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$tag" dist/*.dmg dist/*.zip --draft --verify-tag $prerelease --title "おむかえフォト ${tag#v}" --notes-file notes.md
