@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ArchivePhoto, Person, Photo, Settings, Snapshot, SyncResult, FaceResult } from '../shared/types';
-import { Store, archivePathAllowed, validDay } from './store';
+import { Store, archivePathAllowed, validDay, chosen } from './store';
 import type { Session, ConnectorOptions } from './connectors';
 export interface Vault { has(provider:string): boolean; get(provider:string): Session; put(provider:string,value:Session):void; }
 export interface Connections {
@@ -39,12 +39,24 @@ export class Service {
     finally{this.store.markUncertain();this.busy=false;this.progress='';this.changed();}
   }
   async login(provider:'codmon'|'mitene'):Promise<void>{await this.exclusive(provider==='codmon'?'コドモンにログイン':'みてねにログイン',async()=>{const session=await this.connectors.manualLogin(provider,this.connectorOptions(provider));this.vault.put(provider,session);this.store.set(provider+'NeedsLogin',false);this.setProgress('ログインしました');});}
-  async sync(startDate?:string,endDate?:string):Promise<void>{
+  /** Count requests already made today too when upgrading from a version without a quota. */
+  syncQuota(now=new Date()): {date:string; count:number} {
+    const date=dayNow(now), saved=this.store.get<{date:string;count:number}>('codmonDailyQuota');
+    if(saved?.date===date)return saved;
+    const rows=this.store.db.prepare("SELECT startedAt FROM jobs WHERE kind='写真・記録を取得'").all();
+    const count=rows.filter(row=>dayNow(new Date(String(row.startedAt)))===date).length;
+    const quota={date,count};this.store.set('codmonDailyQuota',quota);return quota;
+  }
+  async sync(startDate?:string,endDate?:string,now=new Date()):Promise<void>{
+    if(this.busy)throw new Error('ほかの処理を実行中です。終わってからもう一度お試しください');
+    // Initialize before startJob so the current attempt is not counted twice.
+    const quota=this.syncQuota(now);
+    if(quota.count>=2)throw new Error('コドモンの取り込みは1日2回までです。今日は上限に達しました。明日もう一度お試しください。');
     await this.exclusive('写真・記録を取得',async()=>{
       const settings=this.store.settings();
-      const end=endDate||dayNow();
+      const end=endDate||dayNow(now);
       const last=this.store.get<string>('lastSync');
-      const recent=new Date();recent.setDate(recent.getDate()-30);
+      const recent=new Date(now);recent.setDate(recent.getDate()-30);
       const pending=this.store.get<{start:string;end:string}>('pendingSync');
       const overlap = last ? new Date(last) : null;
       if(overlap) overlap.setDate(overlap.getDate()-1);
@@ -53,8 +65,11 @@ export class Service {
       const start=pending&&pending.start<requestedStart?pending.start:requestedStart;
       const until=pending&&pending.end>end?pending.end:end;
       if(!validDay(start)||!validDay(until)||start>until)throw new Error('取得期間が正しくありません');
+      const session=this.session('codmon');
       this.store.set('pendingSync',{start,end:until});
-      const result=await this.connectors.syncCodmon(settings,this.session('codmon'),start,until,this.connectorOptions('codmon'));
+      // Reserve before contacting コドモン. Network failures also consume a request; restarts keep the count.
+      this.store.set('codmonDailyQuota',{date:quota.date,count:quota.count+1});
+      const result=await this.connectors.syncCodmon(settings,session,start,until,this.connectorOptions('codmon'));
       this.store.ingest(result.photos,result.posts);
       if(!result.errors.length){if(!startDate&&!endDate)this.store.set('lastSync',new Date().toISOString());this.store.set('pendingSync',null);}
       const errors=[...result.errors];
@@ -66,14 +81,28 @@ export class Service {
       this.setProgress(`${result.photos.length}枚の写真・${result.posts.length}件の記録を確認しました`);
     });
   }
-  async analyze():Promise<void>{await this.exclusive('候補を更新',async()=>{const warnings=await this.analyzeInternal();const s=this.store.settings();if(s.sendMode==='automatic'&&s.miteneEnabled)await this.sendInternal();if(warnings.length)throw new Error(warnings.join(' / '));this.setProgress('候補を更新しました');});}
+  async analyze():Promise<void>{await this.exclusive('候補を更新',async()=>{
+    const before=this.store.photos(), selectedBefore=new Set(before.filter(chosen).map(p=>p.id));
+    const sentBefore=new Set(before.filter(p=>p.uploadState==='sent').map(p=>p.id));
+    const warnings=await this.analyzeInternal();const s=this.store.settings();
+    if(s.sendMode==='automatic'&&s.miteneEnabled)await this.sendInternal();
+    if(warnings.length)throw new Error(warnings.join(' / '));
+    const after=this.store.photos(), selectedAfter=new Set(after.filter(chosen).map(p=>p.id));
+    const added=[...selectedAfter].filter(id=>!selectedBefore.has(id)).length;
+    const removed=[...selectedBefore].filter(id=>!selectedAfter.has(id)).length;
+    const sent=after.filter(p=>p.uploadState==='sent'&&!sentBefore.has(p.id)).length;
+    const summary=!s.people.length ? '顔認識を使う子どもは設定されていません。' : added||removed
+      ? `写真の選択を更新しました（追加${added}枚・解除${removed}枚）。`
+      : '顔認識の結果を確認しました（選択する写真に変更はありません）。';
+    this.setProgress(summary+(sent ? ` みてねに${sent}枚送信しました。` : ''));
+  });}
   async analyzeInternal():Promise<string[]>{
     const s=this.store.settings();const errors:string[]=[];
     if(s.importPhotos){
       const pending=this.store.photos().filter(p=>!p.imported);
-      if(pending.length){this.setProgress('写真.appに取り込んでいます');const result=await this.connectors.importIntoPhotos(s,pending);this.store.markImported(result.imported,result.errors);if(Object.keys(result.errors).length)errors.push(`${Object.keys(result.errors).length}枚の写真.app取り込みを確認できませんでした`);}
+      if(pending.length){this.setProgress('Macの「写真」アプリに取り込んでいます');const result=await this.connectors.importIntoPhotos(s,pending);this.store.markImported(result.imported,result.errors);if(Object.keys(result.errors).length)errors.push(`${Object.keys(result.errors).length}枚のMacの「写真」アプリ取り込みを確認できませんでした`);}
     }
-    if(s.people.length){this.setProgress('写真.appの顔認識の結果を読み込んでいます');const faces=await this.connectors.analyzePhotos(s);this.store.applyFaces(faces);
+    if(s.people.length){this.setProgress('Macの「写真」アプリの顔認識の結果を読み込んでいます');const faces=await this.connectors.analyzePhotos(s);this.store.applyFaces(faces);
       if(s.importPhotos&&this.connectors.updatePersonAlbum){const photos=this.store.photos().filter(p=>p.imported);for(const person of s.people){try{await this.connectors.updatePersonAlbum(s,person,personPhotos(photos,faces,person,s.people.length));}catch(e){errors.push(s.people.length>1?`${person.name}のアルバム：${safeError(e)}`:safeError(e));}}}
     }
     if(s.miteneEnabled&&this.vault.has('mitene')&&this.connectors.refreshMiteneSession&&this.store.get<string>('miteneRefresh')!==dayNow()){
@@ -88,7 +117,7 @@ export class Service {
     const candidates=this.store.eligible(ids);
     // A filename is the ledger identity. Never submit two rows with the same filename in one batch.
     const photos=[...new Map(candidates.map(p=>[p.filename,p])).values()];
-    if(!photos.length){this.setProgress('送信対象はありません');return;}
+    if(!photos.length){this.setProgress('みてねに送る未送信の写真はありません');return;}
     for(const p of photos)if(!await archivePathAllowed(p.path,settings.saveRoot))throw new Error('送信する写真が保存先に見つかりません。再取得してください');
     await this.connectors.uploadMitene(settings,this.session('mitene'),photos,{beforeSend:ids=>{this.store.markSending(ids);this.changed();},onSent:ids=>{this.store.markSent(ids);this.changed();}},this.connectorOptions('mitene'));
     this.setProgress(`${photos.length}枚をみてねへ送信しました`);
@@ -97,9 +126,14 @@ export class Service {
     const s=this.store.settings();if(this.busy||!s.setupComplete||!s.autoSync||this.options.demo||this.options.validation)return;
     const date=dayNow(now);const minute=now.getHours()*60+now.getMinutes();
     // One catch-up after sleep rather than firing every missed slot at once. Attempts are separate from last success.
-    const syncSlot=minute>=21*60?'21:00':minute>=17*60+30?'17:30':null;
-    const faceSlot=[7,13,19,22].filter(h=>h*60<=minute).at(-1);
-    if(syncSlot&&this.store.get<string>('syncAttempt')!==`${date} ${syncSlot}`){this.store.set('syncAttempt',`${date} ${syncSlot}`);await this.sync();}
-    else if(faceSlot!==undefined&&this.store.get<string>('faceAttempt')!==`${date} ${faceSlot}`){this.store.set('faceAttempt',`${date} ${faceSlot}`);await this.analyze();}
+    const latest=(times:string[])=>times.filter(t=>Number(t.slice(0,2))*60+Number(t.slice(3))<=minute).at(-1);
+    const syncSlot=latest(s.syncTimes),faceSlot=latest(s.faceTimes);
+    if(syncSlot&&this.store.get<string>('syncAttempt')!==`${date} ${syncSlot}`){
+      this.store.set('syncAttempt',`${date} ${syncSlot}`);
+      if(this.syncQuota(now).count<2){await this.sync(undefined,undefined,now);return;}
+    }
+    // Previous versions stored a bare hour. Treat it as the same slot when upgrading.
+    const previousFace=this.store.get<string>('faceAttempt')?.replace(/ (\d{1,2})$/,(_,h:string)=>` ${h.padStart(2,'0')}:00`);
+    if(faceSlot!==undefined&&previousFace!==`${date} ${faceSlot}`){this.store.set('faceAttempt',`${date} ${faceSlot}`);await this.analyze();}
   }
 }

@@ -160,7 +160,7 @@ test('scheduler is disabled by default, catches up once per slot, and never over
     await f.service.scheduled(late); assert.deepEqual(calls, ['sync']);
     assert.equal(f.store.get('syncAttempt'), '2026-10-03 21:00');
     await f.service.scheduled(late); assert.deepEqual(calls, ['sync', 'face']);
-    assert.equal(f.store.get('faceAttempt'), '2026-10-03 22');
+    assert.equal(f.store.get('faceAttempt'), '2026-10-03 22:00');
     await f.service.scheduled(late); assert.equal(calls.length, 2);
     f.service.busy = true;
     await f.service.scheduled(new Date(2026, 9, 4, 23, 0)); assert.equal(calls.length, 2);
@@ -214,4 +214,81 @@ test('failed face read retains manual decisions and blocks stale automatic selec
     // Explicit manual sending remains independent from the unavailable face analysis.
     await f.service.send(['third.jpeg']); assert.deepEqual(f.uploads, [['third.jpeg']]);
   } finally { await f.close(); }
+});
+
+test('daily acquisition quota covers manual and scheduled work, survives restart and time edits, then resets next day', async () => {
+  const f = await fixture({ autoSync: true, miteneEnabled: false, syncTimes: ['09:00','18:00'], faceTimes: ['13:00'] });
+  let acquisitions=0,faces=0;
+  const day=new Date(2026,9,8,10,0);
+  try {
+    f.connections.syncCodmon=async()=>{acquisitions++;return {photos:[],posts:[],errors:[]};};
+    await f.service.sync(undefined,undefined,day);
+    await f.service.sync('2026-01-01','2026-01-02',day);
+    const restarted=new Service(f.store,f.vault,f.connections,{changed:()=>{},notify:()=>{}});
+    await assert.rejects(restarted.sync(undefined,undefined,day),/1日2回/);
+    f.store.saveSettings({...f.store.settings(),syncTimes:['11:00','19:00']});
+    restarted.analyze=async()=>{faces++;};
+    await restarted.scheduled(new Date(2026,9,8,20,0));
+    await restarted.scheduled(new Date(2026,9,8,20,1));
+    assert.equal(acquisitions,2);assert.equal(faces,1,'face updates keep working after the acquisition quota is used');
+    await restarted.scheduled(new Date(2026,9,9,12,0));
+    assert.equal(acquisitions,3);assert.deepEqual(f.store.get('codmonDailyQuota'),{date:'2026-10-09',count:1});
+  } finally {await f.close();}
+});
+test('failed network attempts consume the quota but invalid dates and missing login do not contact the service', async () => {
+  const f=await fixture({miteneEnabled:false});let calls=0;
+  const now=new Date(2026,9,8,10,0);
+  try {
+    f.connections.syncCodmon=async()=>{calls++;throw new Error('simulated network failure');};
+    await assert.rejects(f.service.sync('2026-02-30','2026-03-01',now),/期間/);
+    assert.equal(f.service.syncQuota(now).count,0);
+    const get=f.vault.get;f.vault.get=()=>{throw new Error('ログインしてください');};
+    await assert.rejects(f.service.sync('2026-01-01','2026-01-02',now),/ログイン/);
+    assert.equal(f.service.syncQuota(now).count,0);f.vault.get=get;
+    await assert.rejects(f.service.sync(undefined,undefined,now),/simulated network failure/);
+    await assert.rejects(f.service.sync(undefined,undefined,now),/simulated network failure/);
+    await assert.rejects(f.service.sync(undefined,undefined,now),/1日2回/);
+    assert.equal(calls,2);
+  }finally{await f.close();}
+});
+test('upgrading initializes the daily limit from existing acquisition history', async () => {
+  const f=await fixture({miteneEnabled:false});let calls=0;
+  const now=new Date(2026,9,8,10,0);
+  try {
+    const insert=f.store.db.prepare('INSERT INTO jobs(kind,startedAt,endedAt,status,message) VALUES(?,?,?,?,?)');
+    for(const status of ['success','error'])insert.run('写真・記録を取得',now.toISOString(),now.toISOString(),status,'fixture');
+    f.connections.syncCodmon=async()=>{calls++;return {photos:[],posts:[],errors:[]};};
+    await assert.rejects(f.service.sync(undefined,undefined,now),/1日2回/);
+    assert.equal(calls,0);assert.equal(f.service.syncQuota(now).count,2);
+  }finally{await f.close();}
+});
+test('scheduler follows edited times, catches up only once and allows disabling each schedule separately', async () => {
+  const f=await fixture({autoSync:true,syncTimes:['06:45','14:15'],faceTimes:['10:05']});const calls:string[]=[];
+  try {
+    f.service.sync=async()=>{calls.push('sync');};f.service.analyze=async()=>{calls.push('face');};
+    await f.service.scheduled(new Date(2026,9,8,6,44));assert.deepEqual(calls,[]);
+    await f.service.scheduled(new Date(2026,9,8,6,45));assert.deepEqual(calls,['sync']);
+    await f.service.scheduled(new Date(2026,9,8,14,20));assert.deepEqual(calls,['sync','sync']);
+    await f.service.scheduled(new Date(2026,9,8,14,21));assert.deepEqual(calls,['sync','sync','face']);
+    await f.service.scheduled(new Date(2026,9,8,17,30));assert.equal(calls.length,3);
+    f.store.saveSettings({...f.store.settings(),syncTimes:[],faceTimes:['18:30']});
+    await f.service.scheduled(new Date(2026,9,8,18,30));assert.deepEqual(calls,['sync','sync','face','face']);
+    f.store.saveSettings({...f.store.settings(),faceTimes:[]});
+    await f.service.scheduled(new Date(2026,9,9,23,0));assert.equal(calls.length,4);
+  }finally{await f.close();}
+});
+
+test('face history distinguishes unchanged selection from added and removed photos', async () => {
+  const f=await fixture({people:[{name:'対象',album:''}],miteneEnabled:false});
+  try {
+    await f.service.analyze();
+    assert.match(f.store.jobs()[0].message,/追加3枚・解除0枚/);
+    await f.service.analyze();
+    assert.match(f.store.jobs()[0].message,/変更はありません/);
+    f.store.decide(['second.jpeg'],'include');
+    f.connections.analyzePhotos=async()=>[];
+    await f.service.analyze();
+    assert.match(f.store.jobs()[0].message,/追加0枚・解除2枚/);
+    assert.equal(f.store.photo('second.jpeg')?.decision,'include');
+  }finally{await f.close();}
 });

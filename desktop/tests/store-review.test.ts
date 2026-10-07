@@ -164,3 +164,14 @@ test('historical manual acquisition cannot advance the incremental checkpoint pa
     assert.ok(ranges[1][0] <= dayNow(last), `manual archive query advanced checkpoint past ${dayNow(last)} to ${ranges[1][0]}`);
   } finally { store.close(); }
 });
+
+test('schedule settings normalize times, reject duplicates and limit acquisition to two slots', () => {
+  const base=defaults('/fixture');
+  assert.deepEqual(validateSettings({...base,syncTimes:['21:00','17:30'],faceTimes:[]}).syncTimes,['17:30','21:00']);
+  assert.deepEqual(validateSettings({...base,syncTimes:[]}).syncTimes,[]);
+  for(const syncTimes of [['08:00','12:00','18:00'],['08:00','08:00'],['24:00'],['9:30'],null])assert.throws(()=>validateSettings({...base,syncTimes}));
+  assert.throws(()=>validateSettings({...base,faceTimes:['13:00','13:00']}));
+  const legacy={...base} as Partial<typeof base>;delete legacy.syncTimes;delete legacy.faceTimes;
+  assert.deepEqual(validateSettings(legacy).syncTimes,['17:30','21:00']);
+  const store=new Store(':memory:');try{store.set('settings',legacy);assert.deepEqual(store.settings().faceTimes,['07:00','13:00','19:00','22:00']);}finally{store.close();}
+});

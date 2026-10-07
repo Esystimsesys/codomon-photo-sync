@@ -9,12 +9,17 @@ export function defaults(home = homedir()): Settings {
   return { saveRoot: join(home, 'Pictures/codomon'), album: 'コドモン', people: [],
     photosLibrary: join(home, 'Pictures/Photos Library.photoslibrary/database/Photos.sqlite'),
     importPhotos: true, sendMode: 'review', miteneEnabled: false, miteneScope: '家族みんなに公開',
-    autoSync: false, launchAtLogin: false, initialStartDate: '2000-01-01', faceMinPx: 25,
+    autoSync: false, syncTimes: ['17:30','21:00'], faceTimes: ['07:00','13:00','19:00','22:00'], launchAtLogin: false, initialStartDate: '2000-01-01', faceMinPx: 25,
     faceMinRatio: .6, faceMainRatio: .8, faceMaxPeople: 5, setupComplete: false };
 }
 export function validDay(value: unknown): value is string {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
     Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+}
+export function validateTimes(value: unknown, label: string, maximum = 1440): string[] {
+  if (!Array.isArray(value) || value.length > maximum || value.some(t => typeof t !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(t))) throw new Error(`${label}の時刻を正しく指定してください${maximum === 2 ? '（1日最大2回）' : ''}`);
+  if (new Set(value).size !== value.length) throw new Error(`${label}に同じ時刻が2回指定されています`);
+  return [...value].sort();
 }
 export function validateSettings(value: unknown): Settings {
   if (!value || typeof value !== 'object') throw new Error('設定の形式が正しくありません');
@@ -33,8 +38,10 @@ export function validateSettings(value: unknown): Settings {
   if (!validDay(s.initialStartDate)) throw new Error('取得開始日が正しくありません');
   for (const key of ['faceMinPx','faceMinRatio','faceMainRatio','faceMaxPeople'] as const) if (typeof s[key] !== 'number' || !Number.isFinite(s[key]) || s[key] < 0) throw new Error('顔の選別条件が正しくありません');
   if (s.faceMinRatio > 1 || s.faceMainRatio > 1 || s.faceMinPx > 10000 || !Number.isInteger(s.faceMaxPeople) || s.faceMaxPeople > 1000) throw new Error('顔の選別条件が範囲外です');
+  const syncTimes = validateTimes(s.syncTimes === undefined ? defaults().syncTimes : s.syncTimes, 'コドモンの取り込み', 2);
+  const faceTimes = validateTimes(s.faceTimes === undefined ? defaults().faceTimes : s.faceTimes, '顔認識の反映');
   // Project only known fields; credentials and renderer-controlled fields never enter settings.
-  return { ...Object.fromEntries(Object.keys(defaults()).map(k => [k, s[k as keyof Settings]])), people } as unknown as Settings;
+  return { ...Object.fromEntries(Object.keys(defaults()).map(k => [k, s[k as keyof Settings]])), people, syncTimes, faceTimes } as unknown as Settings;
 }
 export function personAlbum(album: string, person: Person): string { return person.album || `${album}（${person.name}）`; }
 /** True only for an existing file inside the archive root, after resolving symlinks. */
@@ -64,7 +71,10 @@ export class Store {
   transaction<T>(fn: () => T): T { this.db.exec('BEGIN IMMEDIATE'); try { const result = fn(); this.db.exec('COMMIT'); return result; } catch (e) { this.db.exec('ROLLBACK'); throw e; } }
   get<T>(key: string): T | undefined { const r = this.db.prepare('SELECT value FROM meta WHERE key=?').get(key); return r ? JSON.parse(String(r.value)) : undefined; }
   set(key: string, value: unknown): void { this.db.prepare('INSERT INTO meta VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(value)); }
-  settings(): Settings { return { ...defaults(), ...this.get<Settings>('settings') }; }
+  settings(): Settings {
+    const s = { ...defaults(), ...this.get<Settings>('settings') };
+    return { ...s, syncTimes: validateTimes(s.syncTimes, 'コドモンの取り込み', 2), faceTimes: validateTimes(s.faceTimes, '顔認識の反映') };
+  }
   saveSettings(s: Settings): void { this.set('settings', validateSettings(s)); }
   photos(): Photo[] { return this.db.prepare('SELECT * FROM photos ORDER BY date DESC, filename').all().map(r => ({ ...r, autoSelected: !!r.autoSelected, imported: !!r.imported })) as unknown as Photo[]; }
   photo(id: string): Photo | undefined { const r = this.db.prepare('SELECT * FROM photos WHERE id=?').get(id); return r ? { ...r, autoSelected: !!r.autoSelected, imported: !!r.imported } as unknown as Photo : undefined; }

@@ -202,7 +202,7 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
             if (collision) { result.errors.push(`${date}: 同じファイル名の異なる写真を別フォルダに保存しました（${filename}）。確認が必要です`); continue; }
             if (previous === undefined) await atomicWrite(sourceFile, JSON.stringify({ filename, pathname: canonical }));
             photoSources.set(filename, canonical);
-            if (date === 'unknown-date') result.errors.push('日付不明の写真を保存しました。写真.appへの取り込みは日付の確認後に行ってください');
+            if (date === 'unknown-date') result.errors.push('日付不明の写真を保存しました。Macの「写真」アプリへの取り込みは日付の確認後に行ってください');
             if (!result.photos.some(p => p.id === filename)) result.photos.push({ id: filename, filename, path: dest, date, title, postId: id });
           } catch (e) { result.errors.push(`${date} 写真: ${errorText(e)}`); }
         }
@@ -261,12 +261,12 @@ async function albumFilenames(album: string): Promise<Set<string>> {
     } catch (e) {
       const disconnected = PHOTOS_DISCONNECTED.test(String((e as { stderr?: unknown }).stderr ?? (e as Error).message));
       if (disconnected && attempt < 3) { await new Promise(resolve => setTimeout(resolve, attempt * 5_000)); continue; }
-      throw new Error(disconnected ? '写真.appとの接続が切れたため、アルバムの写真を確認できませんでした。次の自動実行で再試行します' : '写真.appのアルバムを読み取れません。写真.appとオートメーション権限を確認してください');
+      throw new Error(disconnected ? 'Macの「写真」アプリとの接続が切れたため、アルバムの写真を確認できませんでした。次の自動実行で再試行します' : 'Macの「写真」アプリのアルバムを読み取れません。Macの「写真」アプリとオートメーション権限を確認してください');
     }
   }
 }
 export async function importIntoPhotos(settings: Settings, photos: ArchivePhoto[]): Promise<{ imported: string[]; errors: Record<string, string> }> {
-  if (process.platform !== 'darwin') throw new Error('写真.appへの取り込みはMacのみ対応しています');
+  if (process.platform !== 'darwin') throw new Error('Macの「写真」アプリへの取り込みはMacのみ対応しています');
   const imported: string[] = [], errors: Record<string, string> = {};
   const have = await albumFilenames(settings.album);
   const todo = photos.filter(p => { if (p.date === 'unknown-date') { errors[p.id] = '撮影日を確認できないため取り込みを保留しています'; return false; } if (have.has(p.filename)) { imported.push(p.id); return false; } return true; });
@@ -275,8 +275,8 @@ export async function importIntoPhotos(settings: Settings, photos: ArchivePhoto[
     try {
       await exec('/usr/bin/osascript', ['-e', `on run argv\nset fileList to {}\nrepeat with p in argv\nset end of fileList to (POSIX file (contents of p)) as alias\nend repeat\nwith timeout of 1800 seconds\ntell application "Photos"\nif not (exists album ${appleScriptString(settings.album)}) then make new album named ${appleScriptString(settings.album)}\nimport fileList into album ${appleScriptString(settings.album)} skip check duplicates false\nend tell\nend timeout\nend run`, ...chunk.map(p => p.path)], { timeout: 1_810_000 });
       const after = await albumFilenames(settings.album);
-      for (const p of chunk) if (after.has(p.filename)) imported.push(p.id); else errors[p.id] = '取り込みを確認できません（内容重複の可能性）。写真.appを確認してください';
-    } catch { for (const p of chunk) errors[p.id] = '写真.appへの取り込みに失敗しました。オートメーション権限を確認してください'; }
+      for (const p of chunk) if (after.has(p.filename)) imported.push(p.id); else errors[p.id] = '取り込みを確認できません（内容重複の可能性）。Macの「写真」アプリを確認してください';
+    } catch { for (const p of chunk) errors[p.id] = 'Macの「写真」アプリへの取り込みに失敗しました。オートメーション権限を確認してください'; }
   }
   return { imported, errors };
 }
@@ -316,11 +316,11 @@ export function readFaceResults(db: DatabaseSync, settings: Settings): FaceResul
   return out;
 }
 export async function analyzePhotos(settings: Settings): Promise<FaceResult[]> {
-  if (process.platform !== 'darwin') throw new Error('写真.appの顔認識はMacのみ対応しています');
+  if (process.platform !== 'darwin') throw new Error('Macの「写真」アプリの顔認識はMacのみ対応しています');
   const filename = settings.photosLibrary.endsWith('.sqlite') ? settings.photosLibrary : path.join(settings.photosLibrary, 'database', 'Photos.sqlite');
   let db: DatabaseSync | undefined;
   try { db = new DatabaseSync(filename, { readOnly: true }); db.exec('PRAGMA busy_timeout=30000'); return readFaceResults(db, settings); }
-  catch { throw new Error('写真ライブラリを読めません。写真.appを開き、ライブラリの場所とフルディスクアクセス権限を確認してください'); }
+  catch { throw new Error('写真ライブラリを読めません。Macの「写真」アプリを開き、ライブラリの場所とフルディスクアクセス権限を確認してください'); }
   finally { db?.close(); }
 }
 export function confirmedUploadCount(text: string): number | null {
@@ -372,7 +372,7 @@ export interface AlbumAdapter {
   albumFiles(album: string): Promise<Set<string>>;
 }
 export async function updatePersonAlbum(settings: Settings, person: Person, selected: ArchivePhoto[]): Promise<void> {
-  if (process.platform !== 'darwin') throw new Error('写真.appのアルバム更新はMacのみ対応しています');
+  if (process.platform !== 'darwin') throw new Error('Macの「写真」アプリのアルバム更新はMacのみ対応しています');
   await updatePersonAlbumWith(settings, person, selected, {
     run: async body => exec('/usr/bin/osascript', ['-e', `with timeout of 900 seconds\ntell application "Photos"\n${body}\nend tell\nend timeout`], { timeout: 910_000 }),
     albumFiles: albumFilenames,
