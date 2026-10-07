@@ -1,8 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ArchivePhoto, Settings, Snapshot, SyncResult, FaceResult } from '../shared/types';
-import { Store, validDay } from './store';
-import { archivePathAllowed, legacyJobs } from './migration';
+import type { ArchivePhoto, Person, Photo, Settings, Snapshot, SyncResult, FaceResult } from '../shared/types';
+import { Store, archivePathAllowed, validDay } from './store';
 import type { Session, ConnectorOptions } from './connectors';
 export interface Vault { has(provider:string): boolean; get(provider:string): Session; put(provider:string,value:Session):void; }
 export interface Connections {
@@ -12,13 +11,21 @@ export interface Connections {
   analyzePhotos(settings:Settings):Promise<FaceResult[]>;
   uploadMitene(settings:Settings,session:Session,photos:ArchivePhoto[],callbacks:{beforeSend:(ids:string[])=>void;onSent:(ids:string[])=>void},options:ConnectorOptions):Promise<void>;
   refreshMiteneSession?: (session:Session,options:ConnectorOptions)=>Promise<Session>;
-  updatePersonAlbum?: (settings:Settings,photos:ArchivePhoto[])=>Promise<void>;
+  updatePersonAlbum?: (settings:Settings,person:Person,photos:ArchivePhoto[])=>Promise<void>;
+}
+/**
+ * One child's album: photos judged to show that child, minus excluded ones. A manually included photo joins the album of
+ * each child found in it at all (even too small to be chosen); with a single child it always joins.
+ */
+export function personPhotos(photos:Photo[],faces:FaceResult[],person:Person,count:number):Photo[]{
+  const mine=faces.filter(f=>f.person===person.name),chosen=new Set(mine.filter(f=>f.selected).map(f=>f.filename)),found=new Set(mine.map(f=>f.filename));
+  return photos.filter(p=>p.decision==='include'?count===1||found.has(p.filename):p.decision==='auto'&&chosen.has(p.filename));
 }
 export function dayNow(now=new Date()):string { return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`; }
 export function safeError(e:unknown):string { return (e instanceof Error?e.message:'処理に失敗しました').replace(/https?:\/\/[^\s)）]+/g,'[接続先]').slice(0,1000); }
 export class Service {
   busy=false; progress=''; update:Snapshot['update']=null;
-  constructor(readonly store:Store,readonly vault:Vault,readonly connectors:Connections,readonly options:{executablePath?:string;changed:()=>void;notify:(message:string)=>void;checkLegacy?:()=>Promise<void>;demo?:boolean;validation?:boolean}){}
+  constructor(readonly store:Store,readonly vault:Vault,readonly connectors:Connections,readonly options:{executablePath?:string;changed:()=>void;notify:(message:string)=>void;demo?:boolean;validation?:boolean}){}
   snapshot():Snapshot { return {settings:this.store.settings(),photos:this.store.photos(),posts:this.store.posts(),jobs:this.store.jobs(),busy:this.busy,progress:this.progress,codmonConnected:this.vault.has('codmon')&&!this.store.get('codmonNeedsLogin'),miteneConnected:this.vault.has('mitene')&&!this.store.get('miteneNeedsLogin'),platform:process.platform,demo:!!this.options.demo,validation:!!this.options.validation,update:this.update}; }
   changed():void{this.options.changed();}
   setProgress=(message:string)=>{this.progress=message;this.changed();};
@@ -31,15 +38,9 @@ export class Service {
     catch(e){const error=safeError(e);if(error.includes('コドモンに再ログイン'))this.store.set('codmonNeedsLogin',true);if(error.includes('みてねに再ログイン'))this.store.set('miteneNeedsLogin',true);this.store.finishJob(job,error);this.options.notify(error);throw new Error(error);}
     finally{this.store.markUncertain();this.busy=false;this.progress='';this.changed();}
   }
-  async assertNoLegacy():Promise<void>{
-    if(this.options.checkLegacy)return this.options.checkLegacy();
-    const jobs=await legacyJobs();
-    if(jobs.length)throw new Error('旧版の自動実行が登録されています。設定の「旧版（Python版）から引き継ぐ」で引き継いでから同期してください');
-  }
   async login(provider:'codmon'|'mitene'):Promise<void>{await this.exclusive(provider==='codmon'?'コドモンにログイン':'みてねにログイン',async()=>{const session=await this.connectors.manualLogin(provider,this.connectorOptions(provider));this.vault.put(provider,session);this.store.set(provider+'NeedsLogin',false);this.setProgress('ログインしました');});}
   async sync(startDate?:string,endDate?:string):Promise<void>{
     await this.exclusive('写真・記録を取得',async()=>{
-      await this.assertNoLegacy();
       const settings=this.store.settings();
       const end=endDate||dayNow();
       const last=this.store.get<string>('lastSync');
@@ -65,27 +66,27 @@ export class Service {
       this.setProgress(`${result.photos.length}枚の写真・${result.posts.length}件の記録を確認しました`);
     });
   }
-  async analyze():Promise<void>{await this.exclusive('候補を更新',async()=>{await this.assertNoLegacy();const warnings=await this.analyzeInternal();const s=this.store.settings();if(s.sendMode==='automatic'&&s.miteneEnabled)await this.sendInternal();if(warnings.length)throw new Error(warnings.join(' / '));this.setProgress('候補を更新しました');});}
+  async analyze():Promise<void>{await this.exclusive('候補を更新',async()=>{const warnings=await this.analyzeInternal();const s=this.store.settings();if(s.sendMode==='automatic'&&s.miteneEnabled)await this.sendInternal();if(warnings.length)throw new Error(warnings.join(' / '));this.setProgress('候補を更新しました');});}
   async analyzeInternal():Promise<string[]>{
     const s=this.store.settings();const errors:string[]=[];
     if(s.importPhotos){
       const pending=this.store.photos().filter(p=>!p.imported);
       if(pending.length){this.setProgress('写真.appに取り込んでいます');const result=await this.connectors.importIntoPhotos(s,pending);this.store.markImported(result.imported,result.errors);if(Object.keys(result.errors).length)errors.push(`${Object.keys(result.errors).length}枚の写真.app取り込みを確認できませんでした`);}
     }
-    if(s.person){this.setProgress('写真.appの顔認識の結果を読み込んでいます');const faces=await this.connectors.analyzePhotos(s);this.store.applyFaces(faces);
-      if(s.importPhotos&&this.connectors.updatePersonAlbum){try{await this.connectors.updatePersonAlbum(s,this.store.photos().filter(p=>p.imported&&(p.decision==='include'||p.decision==='auto'&&p.autoSelected)));}catch(e){errors.push(safeError(e));}}
+    if(s.people.length){this.setProgress('写真.appの顔認識の結果を読み込んでいます');const faces=await this.connectors.analyzePhotos(s);this.store.applyFaces(faces);
+      if(s.importPhotos&&this.connectors.updatePersonAlbum){const photos=this.store.photos().filter(p=>p.imported);for(const person of s.people){try{await this.connectors.updatePersonAlbum(s,person,personPhotos(photos,faces,person,s.people.length));}catch(e){errors.push(s.people.length>1?`${person.name}のアルバム：${safeError(e)}`:safeError(e));}}}
     }
     if(s.miteneEnabled&&this.vault.has('mitene')&&this.connectors.refreshMiteneSession&&this.store.get<string>('miteneRefresh')!==dayNow()){
       try{await this.connectors.refreshMiteneSession(this.session('mitene'),this.connectorOptions('mitene'));this.store.set('miteneRefresh',dayNow());}catch(e){errors.push(safeError(e));if(safeError(e).includes('再ログイン'))this.store.set('miteneNeedsLogin',true);}
     }
     this.changed();return errors;
   }
-  async send(ids:string[]):Promise<void>{await this.exclusive('みてねへ送信',async()=>{await this.assertNoLegacy();await this.sendInternal(ids);});}
+  async send(ids:string[]):Promise<void>{await this.exclusive('みてねへ送信',async()=>{await this.sendInternal(ids);});}
   async sendInternal(ids?:string[]):Promise<void>{
     const settings=this.store.settings();if(!settings.miteneEnabled)throw new Error('設定でみてね連携を有効にしてください');
     if(ids){for(const id of ids){const p=this.store.photo(id);if(!p||p.uploadState!=='pending')throw new Error('未送信の写真だけを選んでください');}this.store.decide(ids,'include');}
     const candidates=this.store.eligible(ids);
-    // A filename is the legacy ledger identity. Never submit two rows with the same filename in one batch.
+    // A filename is the ledger identity. Never submit two rows with the same filename in one batch.
     const photos=[...new Map(candidates.map(p=>[p.filename,p])).values()];
     if(!photos.length){this.setProgress('送信対象はありません');return;}
     for(const p of photos)if(!await archivePathAllowed(p.path,settings.saveRoot))throw new Error('送信する写真が保存先に見つかりません。再取得してください');

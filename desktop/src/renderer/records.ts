@@ -1,6 +1,6 @@
 import type { ArchivePost as Post } from '../shared/types';
 
-/** One record as shown on screen. A legacy (Python版) day file expands into one entry per post. */
+/** One record as shown on screen. */
 export interface RecordEntry {
   kind: string;
   title: string;
@@ -11,39 +11,14 @@ export interface RecordEntry {
   attachments: number;
 }
 
-const kindLabels: Record<string, string> = {activities:'活動記録',topics:'お知らせ',comments:'連絡帳',bills:'請求',timeline:'活動記録',contact:'連絡帳',notice:'お知らせ',bill:'請求',communication:'連絡帳',invoice:'請求',請求情報:'請求'};
-const META = /^- (投稿者|公開範囲|配信): /;
+const kindLabels: Record<string, string> = {activities:'活動記録',topics:'お知らせ',comments:'連絡帳',bills:'請求'};
 
-export function recordEntries(post: Post): RecordEntry[] {
+export function recordEntry(post: Post): RecordEntry {
   const kind = kindLabels[post.kind] || post.kind;
-  if (!/^# .+\n/.test(post.body)) return [entry(kind, post.title, '', post.body, [], post.attachments.length)];
-  // Legacy archives store a whole Markdown day file: "## [種別] タイトル", meta, body, photos and attachments.
-  const out: RecordEntry[] = [];
-  for (const section of post.body.split(/^## /m).slice(1)) {
-    const [heading, ...lines] = section.split('\n');
-    const m = heading.match(/^\[([^\]]*)\]\s*(.*)$/);
-    const label = m ? kindLabels[m[1]] || m[1] : kind;
-    let author = '', attachments = 0, inPhotos = false;
-    const text: string[] = [], items: string[] = [];
-    for (const line of lines) {
-      if (/^### 写真/.test(line)) { inPhotos = true; continue; }
-      if (inPhotos && /^- !\[/.test(line)) continue;
-      inPhotos = false;
-      if (META.test(line)) { author = line.slice(2).split(' / ').find(p => p.startsWith('投稿者: '))?.slice(5).trim() || author; continue; }
-      if (/^- 添付(: |ファイルあり)/.test(line)) { attachments++; continue; }
-      if (label === '請求' && /^- /.test(line)) { items.push(line.slice(2).trim()); continue; }
-      text.push(line);
-    }
-    out.push(entry(label, m ? m[2] : heading, author, text.join('\n'), items, attachments));
-  }
-  return out.length ? out : [entry(kind, post.title, '', post.body, [], post.attachments.length)];
-}
-
-function entry(kind: string, title: string, author: string, body: string, items: string[], attachments: number): RecordEntry {
-  const note = contactNote(body.trim());
-  // New bill records keep only "name amount" lines in the body.
-  if (kind === '請求' && !note && !items.length) { items = body.split('\n').map(line => line.trim()).filter(Boolean); body = ''; }
-  return { kind, title: title.trim(), author, text: note ? note.memo : tidy(body), fields: note?.fields ?? [], items: items.map(money).filter(Boolean), attachments };
+  const note = contactNote(post.body.trim());
+  // Bill records keep only "name amount" lines in the body.
+  const items = kind === '請求' && !note ? post.body.split('\n').map(line => money(line.trim())).filter(Boolean) : [];
+  return { kind, title: post.title.trim(), author: post.author ?? '', text: note ? note.memo : items.length ? '' : tidy(post.body), fields: note?.fields ?? [], items, attachments: post.attachments.length };
 }
 
 const tidy = (text: string) => text.replace(/[ \t　]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim();
@@ -71,7 +46,7 @@ function contactNote(body: string): { memo: string; fields: [string, string][] }
   return { memo: tidy(String(d.memo ?? '')), fields };
 }
 
-/** The legacy version turned <br> into raw line breaks even inside JSON strings, which JSON.parse rejects. */
+/** Archiving turns <br> into line breaks, including those inside the JSON strings of 連絡帳, which JSON.parse rejects. */
 function escapeControls(json: string): string {
   let out = '', inString = false, escaped = false;
   for (const c of json) {

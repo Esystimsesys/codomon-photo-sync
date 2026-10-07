@@ -7,7 +7,7 @@ import path from 'node:path';
 import piexif from 'piexifjs';
 import { normalizeDate, monthlyIntervals, entryDate, timelinePhotos, recordBody, photoFilename, codmonUrl, stampExif, atomicWrite, fetchTimeline, readFaceResults, judgeFace, confirmedUploadCount, appleScriptString, syncCodmonRequest } from '../src/main/connectors';
 import type { Settings } from '../src/shared/types';
-const settings = { album:'園',person:'対象',faceMinPx:25,faceMinRatio:0.6,faceMainRatio:0.8,faceMaxPeople:5 } as Settings;
+const settings = { album:'園',people:[{name:'対象',album:''}],faceMinPx:25,faceMinRatio:0.6,faceMainRatio:0.8,faceMaxPeople:5 } as unknown as Settings;
 
 test('calendar intervals are contiguous inclusive months and reject impossible dates', () => {
   assert.equal(normalizeDate('2026年8月6日'), '2026-08-06');
@@ -84,6 +84,9 @@ test('live read-only Photos DB sees WAL, discovers join version and ignores tras
       assert.equal(rows.length,1); assert.equal(rows[0].filename,'portrait.jpeg'); assert.equal(rows[0].selected,false);
       writer.exec('UPDATE ZDETECTEDFACE SET ZSIZE=0.07 WHERE ZASSETFORFACE=10 AND ZPERSONFORFACE=1');
       rows = readFaceResults(reader,settings); assert.equal(rows[0].selected,true);
+      // Siblings are judged one by one against the same photo.
+      rows = readFaceResults(reader,{...settings,people:[{name:'対象',album:''},{name:'ほか',album:''}]});
+      assert.deepEqual(rows.map(r=>[r.filename,r.person,r.selected]),[['portrait.jpeg','対象',true],['portrait.jpeg','ほか',true]]);
       assert.throws(() => reader.exec('DELETE FROM ZPERSON'));
     } finally { reader.close(); }
   } finally { writer.close(); await rm(dir,{recursive:true,force:true}); }
@@ -151,6 +154,26 @@ test('different source paths sharing a basename are preserved separately and fla
     assert.ok(result.errors.some(e=>e.includes('同じファイル名')));
     const {readdir} = await import('node:fs/promises');
     assert.equal((await readdir(path.join(dir,'2026-01-01','重複名の確認'))).length,1);
+  } finally { await rm(dir,{recursive:true,force:true}); }
+});
+
+test('records keep their author and the children they are about; a failed child list only drops the labels', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(),'codomon-children-'));
+  const fake = (children: unknown) => ({get:async(raw: string) => { const u = new URL(raw); return {
+    status:()=>u.pathname.endsWith('/children/')&&!children?500:200, headers:()=>({}),body:async()=>Buffer.from(''),
+    json:async()=>u.pathname.endsWith('/services/')?{data:{s:{}}}:u.pathname.endsWith('/children/')?children:u.pathname.endsWith('/timeline/')?{data:[
+      {id:1,timeline_kind:'comments',display_date:'2026-01-01',content:'連絡',insert_administrator_name:'担任',array_member_id:['11']},
+      {id:2,timeline_kind:'activities',display_date:'2026-01-01',overview:'散歩',array_member_id:['11','22']},
+    ]}:{}
+  };}}) as any;
+  try {
+    const children = {data:[{name:'上の子',nickname:null,child_member_relations:[{member_id:'11'}]},{name:'下の子',nickname:'した',child_member_relations:[{member_id:'22'}]}]};
+    const result = await syncCodmonRequest({...settings,saveRoot:dir},fake(children),'2026-01-01','2026-01-02');
+    assert.deepEqual(result.posts.map(p=>p.children),[['上の子'],['上の子','した']]);
+    assert.deepEqual(result.posts.map(p=>p.author),['担任',undefined]);
+    assert.match(await readFile(result.posts[1].path,'utf8'),/対象: 上の子・した/);
+    const unlabeled = await syncCodmonRequest({...settings,saveRoot:dir},fake(null),'2026-01-01','2026-01-02');
+    assert.deepEqual(unlabeled.errors,[]); assert.deepEqual(unlabeled.posts.map(p=>p.children),[undefined,undefined]);
   } finally { await rm(dir,{recursive:true,force:true}); }
 });
 
@@ -288,14 +311,14 @@ function albumFixture(options: { incomplete?: boolean; renameFailure?: boolean; 
     },
     albumFiles: async (name: string) => options.finalMismatch && renamed && name===target ? new Set(['unexpected.jpeg']) : new Set(albums.get(name) || []),
   };
-  const config = {...settings,personAlbum:target};
+  const config = {...settings,person:{name:'対象',album:target}};
   const photos = (options.unchanged?['first.jpeg']:['second.jpeg']).map(filename=>({filename})) as any;
   return {albums,commands,adapter,config,photos,target};
 }
 test('person album incomplete staging never renames or deletes original album', async () => {
   const {updatePersonAlbumWith} = await import('../src/main/connectors');
   const f = albumFixture({incomplete:true});
-  await assert.rejects(updatePersonAlbumWith(f.config,f.photos,f.adapter),/既存アルバムを保持/);
+  await assert.rejects(updatePersonAlbumWith(f.config,f.config.person,f.photos,f.adapter),/既存アルバムを保持/);
   assert.deepEqual([...f.albums.get(f.target)!],['first.jpeg']);
   assert.ok(!f.commands.some(c=>c.includes('set name of album')||c.includes('delete album')));
   assert.ok([...f.albums.keys()].some(name=>name.includes('更新中')));
@@ -303,7 +326,7 @@ test('person album incomplete staging never renames or deletes original album', 
 test('person album rename failure restores original name and never deletes backup content', async () => {
   const {updatePersonAlbumWith} = await import('../src/main/connectors');
   const f = albumFixture({renameFailure:true});
-  await assert.rejects(updatePersonAlbumWith(f.config,f.photos,f.adapter),/simulated staging/);
+  await assert.rejects(updatePersonAlbumWith(f.config,f.config.person,f.photos,f.adapter),/simulated staging/);
   assert.deepEqual([...f.albums.get(f.target)!],['first.jpeg']);
   assert.ok(!f.commands.some(c=>c.includes('delete album')));
   assert.ok(f.commands.some(c=>/更新前.*to "対象アルバム"/.test(c)));
@@ -312,7 +335,7 @@ test('person album rename failure restores original name and never deletes backu
 test('person album final mismatch preserves old backup and source assets', async () => {
   const {updatePersonAlbumWith} = await import('../src/main/connectors');
   const f = albumFixture({finalMismatch:true});
-  await assert.rejects(updatePersonAlbumWith(f.config,f.photos,f.adapter),/更新後の確認/);
+  await assert.rejects(updatePersonAlbumWith(f.config,f.config.person,f.photos,f.adapter),/更新後の確認/);
   const backup = [...f.albums.entries()].find(([name])=>name.includes('更新前'))!;
   assert.deepEqual([...backup[1]],['first.jpeg']);
   assert.ok(!f.commands.some(c=>c.includes('delete album')));
@@ -321,7 +344,7 @@ test('person album final mismatch preserves old backup and source assets', async
 test('empty person selection replaces album references with empty set without touching source', async () => {
   const {updatePersonAlbumWith} = await import('../src/main/connectors');
   const f = albumFixture();
-  await updatePersonAlbumWith(f.config,[],f.adapter);
+  await updatePersonAlbumWith(f.config,f.config.person,[],f.adapter);
   assert.equal(f.albums.get(f.target)!.size,0);
   assert.deepEqual([...f.albums.get('園')!],['first.jpeg','second.jpeg']);
   assert.equal(f.commands.filter(c=>c.includes('delete album')).length,1);
@@ -331,7 +354,7 @@ test('empty person selection replaces album references with empty set without to
 test('unchanged person album performs no mutation', async () => {
   const {updatePersonAlbumWith} = await import('../src/main/connectors');
   const f = albumFixture({unchanged:true});
-  await updatePersonAlbumWith(f.config,f.photos,f.adapter);
+  await updatePersonAlbumWith(f.config,f.config.person,f.photos,f.adapter);
   assert.equal(f.commands.length,1); assert.ok(f.commands[0].startsWith('return'));
   assert.deepEqual([...f.albums.get(f.target)!],['first.jpeg']);
 });

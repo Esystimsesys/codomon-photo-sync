@@ -5,6 +5,24 @@ test('demo overview is isolated and shows fixture status', async ({page}) => {
  await page.getByRole('button', {name:'園の記録', exact:true}).click();
  await expect(page.getByRole('heading', {name:'秋の色をさがしに'})).toBeVisible();
 });
+test('siblings: records filter by child, and children can be added and removed in settings', async ({page}) => {
+ await page.goto('/'); await page.getByRole('button', {name:'園の記録', exact:true}).click();
+ await expect(page.locator('.record')).toHaveCount(2);
+ await page.getByRole('button', {name:'さくら', exact:true}).click();
+ await expect(page.locator('.record')).toHaveCount(1);
+ await expect(page.locator('.record-child')).toHaveText('さくら・はると');
+ await page.getByRole('button', {name:'設定',exact:true}).click();
+ await expect(page.getByLabel('子どもの名前')).toHaveCount(2);
+ await page.getByRole('button', {name:'＋ 子どもを追加'}).click();
+ await page.getByLabel('子どもの名前').nth(2).fill('みお');
+ await page.locator('[data-remove-person]').first().click();
+ await page.getByRole('button', {name:'設定を保存',exact:true}).click();
+ await expect(page.getByRole('status')).toContainText('設定を保存しました。');
+ await page.getByRole('button', {name:'ホーム',exact:true}).click(); await page.getByRole('button', {name:'設定',exact:true}).click();
+ await expect(page.getByLabel('子どもの名前')).toHaveCount(2);
+ await expect(page.getByLabel('子どもの名前').first()).toHaveValue('はると');
+ await expect(page.getByLabel('子どもの名前').last()).toHaveValue('みお');
+});
 test('manual selection persists when switching tabs', async ({page}) => {
  await page.goto('/'); await page.getByRole('button', {name:'写真', exact:true}).click();
  await expect(page.locator('.photo-card')).toHaveCount(3);
@@ -53,11 +71,10 @@ test('narrow layout stays within viewport and navigation works', async ({page}) 
 });
 async function nativeFixture(page: import('@playwright/test').Page, setupComplete = false, scenario = '') {
  await page.addInitScript(({setupComplete, scenario}) => {
-  const s = {settings: {saveRoot:'/Users/test/Pictures/archive',album:'コドモン',person:'',personAlbum:'',photosLibrary:'',importPhotos:false,sendMode:'review',miteneEnabled:scenario.startsWith('send'),miteneScope:'家族みんなに公開',autoSync:true,launchAtLogin:false,initialStartDate:'2000-01-01',faceMinPx:50,faceMinRatio:.08,faceMainRatio:.6,faceMaxPeople:scenario === 'zero-people' ? 0 : 5,setupComplete},photos:scenario.startsWith('send') || scenario === 'validation' ? [{id:'recovery-photo',filename:'recovery.jpg',path:'',date:'2026-10-02',title:'Recovery',postId:'',decision:'include',autoSelected:true,reason:'',uploadState:scenario === 'send-uncertain' ? 'uncertain' : 'pending',imported:false,importError:null,sentAt:null}] : [],posts:[{id:'unsafe',date:'2026-10-02',kind:'お知らせ',title:'安全な記録表示',body:'<img src=x onerror="window.UNSAFE=true"> 園からのお知らせ',path:'',attachments:[]}],jobs:scenario === 'login-error' || scenario.startsWith('send') ? [{id:1,kind:scenario === 'login-error' ? 'login' : 'send',startedAt:'2026-10-02T08:00:00Z',endedAt:'2026-10-02T08:01:00Z',status:'error',message:'Failed'}] : [],busy:false,progress:'',codmonConnected:setupComplete,miteneConnected:false,platform:'darwin',demo:false,validation:scenario === 'validation',update:null};
+  const s = {settings: {saveRoot:'/Users/test/Pictures/archive',album:'コドモン',people:[],photosLibrary:'',importPhotos:false,sendMode:'review',miteneEnabled:scenario.startsWith('send'),miteneScope:'家族みんなに公開',autoSync:true,launchAtLogin:false,initialStartDate:'2000-01-01',faceMinPx:50,faceMinRatio:.08,faceMainRatio:.6,faceMaxPeople:scenario === 'zero-people' ? 0 : 5,setupComplete},photos:scenario.startsWith('send') || scenario === 'validation' ? [{id:'recovery-photo',filename:'recovery.jpg',path:'',date:'2026-10-02',title:'Recovery',postId:'',decision:'include',autoSelected:true,reason:'',uploadState:scenario === 'send-uncertain' ? 'uncertain' : 'pending',imported:false,importError:null,sentAt:null}] : [],posts:[{id:'unsafe',date:'2026-10-02',kind:'お知らせ',title:'安全な記録表示',body:'<img src=x onerror="window.UNSAFE=true"> 園からのお知らせ',path:'',attachments:[]}],jobs:scenario === 'login-error' || scenario.startsWith('send') ? [{id:1,kind:scenario === 'login-error' ? 'コドモンにログイン' : 'みてねへ送信',startedAt:'2026-10-02T08:00:00Z',endedAt:'2026-10-02T08:01:00Z',status:'error',message:'Failed'}] : [],busy:false,progress:'',codmonConnected:setupComplete,miteneConnected:false,platform:'darwin',demo:false,validation:scenario === 'validation',update:null};
   const callbacks: ((s: unknown) => void)[] = [];
   Object.assign(window, {desktop: {snapshot:async()=>structuredClone(s),onChange:(cb:(s:unknown)=>void)=>{callbacks.push(cb);return()=>{};},action:async(a:{type:string,provider?:string,settings?:typeof s.settings})=>{
    Object.assign(window, {lastAction: a});
-   if(a.type === 'migrate') return null;
    if(a.type === 'sync' && scenario !== 'period') throw new Error('接続に失敗しました。再ログインしてください。');
    if(a.type === 'chooseFolder') return {path:'/Users/test/Pictures/おむかえフォト'};
    if(a.type === 'login') {s.codmonConnected=true;callbacks.forEach(cb=>cb(structuredClone(s)));}
@@ -70,9 +87,9 @@ test('native onboarding keeps draft across login, chooses folder and reports fai
  await nativeFixture(page); await page.goto('/');
  await expect(page.getByText('体験用のデモです', {exact:false})).toHaveCount(0);
  await expect(page.getByRole('heading', {name:'はじめの設定'})).toBeVisible();
- await page.getByLabel('人物の名前', {exact:false}).fill('テストの名前');
+ await page.getByLabel('子どもの名前').fill('テストの名前');
  await page.getByRole('button', {name:'コドモンにログイン',exact:true}).click();
- await expect(page.getByLabel('人物の名前', {exact:false})).toHaveValue('テストの名前');
+ await expect(page.getByLabel('子どもの名前')).toHaveValue('テストの名前');
  await page.getByRole('button', {name:'フォルダを選ぶ',exact:true}).click();
  await expect(page.getByLabel('写真・記録の保存先')).toHaveValue('/Users/test/Pictures/おむかえフォト');
  await page.getByRole('button', {name:'保存してはじめる',exact:true}).click();
@@ -98,13 +115,6 @@ test('visual overview, photo inspection, and keyboard navigation', async ({page}
  await page.keyboard.press('Escape');
  await expect(page.getByRole('dialog')).toHaveCount(0);
 });
-test('migration cancellation has no success notice and retains settings draft', async ({page}) => {
- await nativeFixture(page,true); await page.goto('/'); await page.getByRole('button', {name:'設定',exact:true}).click();
- await page.getByLabel('人物の名前', {exact:false}).fill('保存前の名前');
- await page.getByRole('button', {name:'旧版のフォルダを選ぶ',exact:true}).click();
- await expect(page.getByText('旧版から引き継ぎました。',{exact:false})).toHaveCount(0);
- await expect(page.getByLabel('人物の名前', {exact:false})).toHaveValue('保存前の名前');
-});
 test('failed login recovery opens settings and does not start sync', async ({page}) => {
  await nativeFixture(page,true,'login-error'); await page.goto('/');
  await page.getByRole('button', {name:'ログインを確認',exact:true}).click();
@@ -117,7 +127,7 @@ for(const scenario of ['send-pending','send-uncertain']) test(`send failure reco
  await expect(page.getByRole('button', {name:scenario === 'send-pending' ? /^未送信/ : /^要確認/})).toHaveAttribute('aria-pressed','true');
  await expect(page.locator('.photo-card')).toHaveCount(1);
 });
-test('migrated unlimited people setting can be saved', async ({page}) => {
+test('unlimited people setting can be saved', async ({page}) => {
  await nativeFixture(page,true,'zero-people'); await page.goto('/'); await page.getByRole('button', {name:'設定',exact:true}).click();
  await page.getByRole('button', {name:'設定を保存',exact:true}).click();
  await expect(page.getByRole('status')).toContainText('設定を保存しました。');
@@ -149,7 +159,8 @@ test('storage-only mode uses the new name and keeps all photos inspectable', asy
  await expect(page.getByRole('link', {name:'おむかえフォト ホーム',exact:true})).toBeVisible();
  await page.getByRole('button', {name:'設定',exact:true}).click();
  await page.getByLabel('みてねへの送信を使う').uncheck();
- await page.getByLabel('人物の名前',{exact:true}).fill('');
+ await page.locator('[data-remove-person]').first().click(); await page.locator('[data-remove-person]').first().click();
+ await expect(page.getByLabel('子どもの名前')).toHaveValue('');
  await page.getByRole('button', {name:'設定を保存',exact:true}).click();
  await page.getByRole('button', {name:'写真',exact:true}).click();
  await expect(page.locator('.photo-card')).toHaveCount(8);
