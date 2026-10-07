@@ -63,7 +63,7 @@ npm run package:mac
 
 `desktop/release/`へDMGとZIPが生成されます。Playwright用ブラウザを同梱するためサイズは大きめです。
 
-`.github/workflows/desktop.yml`はApple SiliconとIntelの各Macランナーで試験・パッケージを作ります。`v0.1.1`のようなタグを push すると、両方のDMG・ZIPを添付した下書きのGitHub Releaseまで作ります。公開は下書きを確認してから手で行います。版番号の付け方と手順は[版番号とリリース](07-release.md)を参照してください。
+`.github/workflows/desktop.yml`はApple SiliconとIntelの各Macランナーで試験・パッケージを作ります。`v0.1.1`のようなタグを push すると、両方のDMG・ZIPを添付した下書きのGitHub Releaseまで作ります。公開は下書きを確認してから手で行います。版番号の付け方と手順は[版番号とリリース](02-release.md)を参照してください。
 
 署名・公証、完全自動更新、Windows版、iPhone管理は初版に含めません。更新ボタンはGitHub Releasesの新しい版を確認し、ダウンロードページへ案内します。
 
