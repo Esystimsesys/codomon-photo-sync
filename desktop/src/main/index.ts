@@ -51,6 +51,18 @@ function browserExecutable():string|undefined{
   return undefined;
 }
 function notify(message:string):void {if(!demo&&!test&&Notification.isSupported())new Notification({title:'おむかえフォト',body:message}).show();}
+const RELEASES='https://api.github.com/repos/Esystimsesys/codomon-photo-sync/releases/latest';
+/** Only published, non-prerelease versions count. Installing stays manual because unsigned apps cannot auto-update. */
+async function checkUpdate(manual:boolean):Promise<void>{
+  const r=await net.fetch(RELEASES,{headers:{Accept:'application/vnd.github+json'}});
+  if(r.status===404)throw new Error('公開されているアップデートはまだありません');if(!r.ok)throw new Error('更新情報を取得できませんでした');
+  const data=await r.json() as {tag_name?:string;html_url?:string};const version=data.tag_name?.replace(/^v/,'');
+  if(!version||!/^\d+\.\d+\.\d+$/.test(version)||!data.html_url?.startsWith('https://github.com/Esystimsesys/codomon-photo-sync/releases/'))throw new Error('更新情報の形式を確認できません');
+  const current=app.getVersion().split('.').map(Number),next=version.split('.').map(Number);const diff=next.map((n,i)=>n-current[i]).find(n=>n!==0)||0;
+  service.update=diff>0?{version,url:data.html_url}:null;service.changed();
+  if(service.update&&store.get<string>('updateNotified')!==version){store.set('updateNotified',version);notify(`新しいバージョン ${version} があります。ホーム画面からダウンロードできます`);}
+  if(!service.update&&manual)await dialog.showMessageBox({message:'お使いのバージョンは最新です',buttons:['閉じる']});
+}
 function changed():void{if(window&&!window.isDestroyed())window.webContents.send('changed',service.snapshot());if(tray)tray.setToolTip(service.busy?`おむかえフォト：${service.progress}`:'おむかえフォト');}
 function showWindow():void {
   if(window){window.show();window.focus();return;}
@@ -119,14 +131,7 @@ async function action(raw:unknown):Promise<unknown>{
     case 'openArchive':{mkdirSync(store.settings().saveRoot,{recursive:true,mode:0o700});const error=await shell.openPath(store.settings().saveRoot);if(error)throw new Error('保存先を開けませんでした');break;}
     case 'openPost':{const post=store.posts().find(p=>p.id===a.id);if(!post||!await archivePathAllowed(post.path,store.settings().saveRoot))throw new Error('記録が見つかりません');const err=await shell.openPath(post.path);if(err)throw new Error('記録を開けませんでした');break;}
     case 'openPrivacy':await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles');break;
-    case 'checkUpdate':{
-      const r=await net.fetch('https://api.github.com/repos/Esystimsesys/codomon-photo-sync/releases/latest',{headers:{Accept:'application/vnd.github+json'}});
-      if(r.status===404)throw new Error('公開されているアップデートはまだありません');if(!r.ok)throw new Error('更新情報を取得できませんでした');
-      const data=await r.json() as {tag_name?:string;html_url?:string};const version=data.tag_name?.replace(/^v/,'');
-      if(!version||!/^\d+\.\d+\.\d+$/.test(version)||!data.html_url?.startsWith('https://github.com/Esystimsesys/codomon-photo-sync/releases/'))throw new Error('更新情報の形式を確認できません');
-      const current=app.getVersion().split('.').map(Number),next=version.split('.').map(Number);const diff=next.map((n,i)=>n-current[i]).find(n=>n!==0)||0;
-      service.update=diff>0?{version,url:data.html_url}:null;if(!service.update)await dialog.showMessageBox({message:'お使いのバージョンは最新です',buttons:['閉じる']});break;
-    }
+    case 'checkUpdate':await checkUpdate(true);break;
     case 'openUpdate':if(service.update)await shell.openExternal(service.update.url);break;
     default:throw new Error('対応していない操作です');
   }
@@ -162,5 +167,7 @@ async function ready():Promise<void>{
   showWindow();
   setInterval(()=>{void service.scheduled().catch(()=>{});},60_000).unref();
   setTimeout(()=>{void service.scheduled().catch(()=>{});},10_000).unref();
+  // Check quietly after launch and once a day; network failures wait for the next check.
+  if(!demo&&!test){setTimeout(()=>{void checkUpdate(false).catch(()=>{});},30_000).unref();setInterval(()=>{void checkUpdate(false).catch(()=>{});},24*60*60_000).unref();}
 }
 if(locked)app.whenReady().then(ready).catch(e=>{dialog.showErrorBox('おむかえフォトを起動できません',safeError(e));app.quit();});
