@@ -1243,10 +1243,6 @@ dialog p:not(.eyebrow) {
 .permission .helper {
   margin: 0;
 }
-.migration-first {
-  border-color: #e3d3ad;
-  background: #fbf7ec;
-}
 .update-note {
   margin: 14px 0 10px;
 }

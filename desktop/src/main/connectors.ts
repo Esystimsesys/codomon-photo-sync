@@ -172,6 +172,7 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
         const id = `${serviceId}:${item.timeline_kind || 'unknown'}:${item.id ?? createHash('sha256').update(JSON.stringify(item)).digest('hex')}`;
         if (seen.has(id)) continue; seen.add(id);
         const date = entryDate(item), title = toText(item.title), kind = String(item.timeline_kind || 'unknown');
+        const author = toText(item.insert_administrator_name);
         const dir = path.join(settings.saveRoot, date);
         const stem = `${safeFilename(id, 200)}-${createHash('sha256').update(id).digest('hex').slice(0, 12)}`;
         const attachments: string[] = [];
@@ -220,8 +221,8 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
           const link = (dest: string) => path.relative(path.dirname(markdown), dest).split(path.sep).map(encodeURIComponent).join('/');
           const photoLinks = result.photos.filter(p => p.postId === id).map(p => `![写真](${link(p.path)})`);
           const attachmentLinks = attachments.map(p => `[添付ファイル](${link(p)})`);
-          await atomicWrite(markdown, `# ${date} ${title}\n\n${kind}\n\n${body}\n\n${[...photoLinks, ...attachmentLinks].join('\n\n')}\n`);
-          result.posts.push({ id, date, kind, title, body, path: markdown, attachments });
+          await atomicWrite(markdown, `# ${date} ${title}\n\n${kind}${author ? `\n\n投稿者: ${author}` : ''}\n\n${body}\n\n${[...photoLinks, ...attachmentLinks].join('\n\n')}\n`);
+          result.posts.push({ id, date, kind, title, body, path: markdown, attachments, ...(author ? { author } : {}) });
         } catch (e) { result.errors.push(`${date} 記録保存: ${errorText(e)}`); }
       }
     }

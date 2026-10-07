@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, chmodSync } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
+import { realpath, stat } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import { homedir } from 'node:os';
 import type { ArchivePhoto, ArchivePost, Decision, FaceResult, Job, Photo, Settings, UploadState } from '../shared/types';
 
@@ -28,6 +29,10 @@ export function validateSettings(value: unknown): Settings {
   if (s.faceMinRatio > 1 || s.faceMainRatio > 1 || s.faceMinPx > 10000 || !Number.isInteger(s.faceMaxPeople) || s.faceMaxPeople > 1000) throw new Error('顔の選別条件が範囲外です');
   // Project only known fields; credentials and renderer-controlled fields never enter settings.
   return Object.fromEntries(Object.keys(defaults()).map(k => [k, s[k as keyof Settings]])) as unknown as Settings;
+}
+/** True only for an existing file inside the archive root, after resolving symlinks. */
+export async function archivePathAllowed(path: string, root: string): Promise<boolean> {
+  try { const [file, base] = await Promise.all([realpath(path), realpath(root)]); const rel = relative(base, file); return !!rel && !rel.startsWith('..') && !isAbsolute(rel) && (await stat(file)).isFile(); } catch { return false; }
 }
 export function chosen(p: Photo): boolean { return p.decision === 'include' || (p.decision === 'auto' && p.autoSelected); }
 export class Store {

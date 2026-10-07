@@ -5,11 +5,10 @@ import { join, resolve, relative, isAbsolute, extname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { Store, validateSettings } from './store';
+import { Store, archivePathAllowed, validateSettings } from './store';
 import { Service, type Vault, safeError } from './service';
 import * as connectors from './connectors';
 import type { Session } from './connectors';
-import { archivePathAllowed, inspectLegacy, legacyJobs, pauseLegacy } from './migration';
 import type { Action, Settings } from '../shared/types';
 
 process.umask(0o077);
@@ -84,33 +83,12 @@ async function saveSettings(input:unknown):Promise<void>{
   if(next.person!==before.person||next.album!==before.album||next.photosLibrary!==before.photosLibrary)store.applyFaces([]);
   store.saveSettings(next);changed();
 }
-async function migrate():Promise<boolean>{
-  let completed=false;
-  const choice=await dialog.showOpenDialog({title:'旧版のcodomon-photo-syncフォルダを選ぶ',properties:['openDirectory']});if(choice.canceled)return false;
-  await service.exclusive('旧版から引き継ぐ',async()=>{
-    if(store.photos().length||store.get('migratedFrom'))throw new Error('引き継ぎは初回設定時に実行してください。既存の台帳への重ね書きを防ぐため中止しました');
-    service.setProgress('旧版の写真と送信履歴を確認しています');
-    let migration=await inspectLegacy(choice.filePaths[0],store.settings());validateSettings(migration.settings);
-    const jobs=await legacyJobs(migration.directory);
-    if(jobs.some(j=>j.running))throw new Error('旧版が処理中です。完了してからもう一度実行してください');
-    if(!await confirm('旧版から引き継ぎますか？',`写真 ${migration.photos.length}枚、記録 ${migration.posts.length}日分、送信履歴 ${migration.ledger.length}件を引き継ぎます。旧版の自動実行 ${jobs.length}件を停止します。保存ファイルは元の場所に残し、送信方法は「確認して送信」にします。`,'引き継ぐ')){service.setProgress('移行をキャンセルしました');return;}
-    await pauseLegacy(jobs);
-    // The preview may have been open while the old scheduler completed another upload.
-    migration=await inspectLegacy(choice.filePaths[0],store.settings());validateSettings(migration.settings);
-    if(migration.sessions.codmon)service.vault.put('codmon',migration.sessions.codmon as Session);
-    if(migration.sessions.mitene)service.vault.put('mitene',migration.sessions.mitene as Session);
-    store.transaction(()=>{store.saveSettings(migration.settings);store.seedFilenames(migration.ledger);store.upsertPhotos(migration.photos);store.upsertPosts(migration.posts);store.set('migratedFrom',migration.directory);store.set('legacyJobs',jobs);});
-    completed=true;service.setProgress('旧版から引き継ぎました。設定を確認してから自動同期をオンにしてください');
-  });
-  return completed;
-}
 async function action(raw:unknown):Promise<unknown>{
   if(!raw||typeof raw!=='object'||typeof (raw as Action).type!=='string')throw new Error('操作が正しくありません');
   const a=raw as Action;
   if(service.busy)throw new Error('処理を実行中です。終わってからもう一度お試しください');
   if(demo||test){
     if(['login','sync','analyze','send','checkUpdate','openUpdate'].includes(a.type))throw new Error('デモでは、コドモン・みてねへの接続と送信は行いません');
-    if(a.type==='migrate')throw new Error('デモでは、旧版からの引き継ぎは行いません');
   }
   switch(a.type){
     case 'settings':await saveSettings(a.settings);break;
@@ -125,7 +103,6 @@ async function action(raw:unknown):Promise<unknown>{
       store.transaction(()=>store.seedFilenames(photos.map(p=>p!.filename),'skipped'));break;
     }
     case 'resolve':if(!['sent','retry','skipped'].includes(a.resolution))throw new Error('結果の指定が正しくありません');store.resolve(idsFrom(a.ids),a.resolution);break;
-    case 'migrate':if(!await migrate())return null;break;
     case 'chooseFolder':{const r=await dialog.showOpenDialog({title:'写真・記録の保存先',properties:['openDirectory','createDirectory']});return r.canceled?null:{path:r.filePaths[0]};}
     case 'chooseLibrary':{const r=await dialog.showOpenDialog({title:'写真ライブラリを選ぶ',properties:['openFile','openDirectory'],filters:[{name:'写真ライブラリ',extensions:['photoslibrary','sqlite']}]});return r.canceled?null:{path:r.filePaths[0].endsWith('.photoslibrary')?join(r.filePaths[0],'database/Photos.sqlite'):r.filePaths[0]};}
     case 'openArchive':{mkdirSync(store.settings().saveRoot,{recursive:true,mode:0o700});const error=await shell.openPath(store.settings().saveRoot);if(error)throw new Error('保存先を開けませんでした');break;}

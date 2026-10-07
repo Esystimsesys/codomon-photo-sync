@@ -30,7 +30,7 @@ async function fixture(overrides: Partial<Settings> = {}) {
       uploads.push(photos.map(p => p.id)); callback.beforeSend(photos.map(p => p.id)); callback.onSent(photos.map(p => p.id));
     },
   };
-  const service = new Service(store, vault, connections, { changed: () => {}, notify: message => messages.push(message), checkLegacy: async () => {} });
+  const service = new Service(store, vault, connections, { changed: () => {}, notify: message => messages.push(message) });
   return { root, archive, store, files, service, connections, vault, uploads, messages, close: async () => { store.close(); await rm(root, { recursive: true, force: true }); } };
 }
 
@@ -55,7 +55,7 @@ test('disabled Photos import preserves existing albums while read-only face sele
     f.connections.importIntoPhotos = async () => { imports++; return { imported: [], errors: {} }; };
     f.connections.updatePersonAlbum = async () => { albumWrites++; };
     f.store.decide(['second.jpeg'], 'exclude');
-    assert.ok(f.store.photos().every(p => !p.imported), 'migration has not marked existing Photos assets imported');
+    assert.ok(f.store.photos().every(p => !p.imported), 'nothing has been imported into Photos yet');
     await f.service.analyze();
     assert.equal(imports, 0); assert.equal(albumWrites, 0);
     assert.equal(f.store.photo('first.jpeg')?.autoSelected, true);

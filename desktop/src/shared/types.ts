@@ -25,7 +25,7 @@ export interface Photo extends ArchivePhoto {
   decision: Decision; autoSelected: boolean; reason: string; uploadState: UploadState;
   imported: boolean; importError: string | null; sentAt: string | null;
 }
-export interface ArchivePost { id: string; date: string; kind: string; title: string; body: string; path: string; attachments: string[]; }
+export interface ArchivePost { id: string; date: string; kind: string; title: string; body: string; path: string; attachments: string[]; author?: string; }
 export interface SyncResult { photos: ArchivePhoto[]; posts: ArchivePost[]; errors: string[]; }
 export interface FaceResult { filename: string; selected: boolean; reason: string; }
 export interface Job { id: number; kind: string; startedAt: string; endedAt: string | null; status: 'running' | 'success' | 'error'; message: string; }
@@ -43,7 +43,6 @@ export type Action =
   | { type: 'send'; ids: string[] }
   | { type: 'resolve'; ids: string[]; resolution: 'sent' | 'retry' | 'skipped' }
   | { type: 'seed'; ids: string[] }
-  | { type: 'migrate' }
   | { type: 'chooseFolder' }
   | { type: 'chooseLibrary' }
   | { type: 'openArchive' }
