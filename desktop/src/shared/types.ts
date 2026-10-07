@@ -4,7 +4,7 @@ export type UploadState = 'pending' | 'sending' | 'sent' | 'uncertain' | 'skippe
 export interface Settings {
   saveRoot: string;
   album: string;
-  /** 写真.appの「ピープル」の名前と、その子の写真をまとめるアルバム名（空なら「取り込み先（名前）」）。きょうだいは並べて登録する。 */
+  /** Macの「写真」アプリの「ピープル」の名前と、その子の写真をまとめるアルバム名（空なら「取り込み先（名前）」）。きょうだいは並べて登録する。 */
   people: Person[];
   photosLibrary: string;
   importPhotos: boolean;
@@ -12,6 +12,8 @@ export interface Settings {
   miteneEnabled: boolean;
   miteneScope: '家族みんなに公開' | '管理者のみ';
   autoSync: boolean;
+  syncTimes: string[];
+  faceTimes: string[];
   launchAtLogin: boolean;
   initialStartDate: string;
   faceMinPx: number;
