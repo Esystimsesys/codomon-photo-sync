@@ -753,6 +753,18 @@ legend {
   font-size: 13px;
   margin-bottom: 12px;
 }
+.people .helper {
+  margin: -6px 0 14px;
+}
+.person-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 0 20px;
+  align-items: start;
+}
+.person-row > button {
+  margin-top: 27px;
+}
 .mode-option {
   display: flex;
   gap: 13px;
@@ -829,6 +841,13 @@ legend {
 .record-meta + .record-fields,
 .record-meta + .record-items {
   margin-top: 0;
+}
+.record-child {
+  margin-left: auto;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--cream);
+  color: var(--green);
 }
 .record-author::before {
   content: "・";
@@ -1089,6 +1108,16 @@ dialog p:not(.eyebrow) {
   }
   .form-grid {
     grid-template-columns: 1fr;
+  }
+  .person-row {
+    grid-template-columns: 1fr auto;
+    gap: 0 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 16px;
+  }
+  .person-row .field:nth-child(2) {
+    grid-row: 2;
   }
   .selection-bar {
     gap: 10px;

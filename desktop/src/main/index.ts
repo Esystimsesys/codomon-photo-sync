@@ -80,7 +80,7 @@ async function saveSettings(input:unknown):Promise<void>{
   const next=validateSettings(input),before=store.settings();
   if(store.photos().length&&next.saveRoot!==before.saveRoot)throw new Error('取り込み済みの写真があります。保存先を移す場合は、このツールを終了してからバックアップを取って行ってください');
   if(!demo&&!test&&next.launchAtLogin!==before.launchAtLogin){if(!app.isPackaged&&next.launchAtLogin)throw new Error('ログイン時の起動は、アプリケーションフォルダに配置した配布版で設定してください');app.setLoginItemSettings({openAtLogin:next.launchAtLogin});}
-  if(next.person!==before.person||next.album!==before.album||next.photosLibrary!==before.photosLibrary)store.applyFaces([]);
+  if(JSON.stringify(next.people.map(p=>p.name))!==JSON.stringify(before.people.map(p=>p.name))||next.album!==before.album||next.photosLibrary!==before.photosLibrary)store.applyFaces([]);
   store.saveSettings(next);changed();
 }
 async function action(raw:unknown):Promise<unknown>{
@@ -115,10 +115,10 @@ async function action(raw:unknown):Promise<unknown>{
   changed();return service.snapshot();
 }
 async function seedDemo():Promise<void>{
-  const root=join(app.getPath('userData'),'sample-archive');mkdirSync(root,{recursive:true,mode:0o700});store.saveSettings({...store.settings(),saveRoot:root,importPhotos:false,person:'サンプル',setupComplete:true});
+  const root=join(app.getPath('userData'),'sample-archive');mkdirSync(root,{recursive:true,mode:0o700});store.saveSettings({...store.settings(),saveRoot:root,importPhotos:false,people:[{name:'サンプル',album:''}],setupComplete:true});
   const colors=['#e3b59e','#a6beb0','#d8c388','#99b6ce','#b4a9c8','#dec2bb'];
   const photos=colors.map((color,i)=>{const filename=`sample-${i+1}.svg`,path=join(root,filename);writeFileSync(path,`<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="${color}"/><circle cx="400" cy="245" r="95" fill="#fff" opacity=".6"/><path d="M220 520 Q400 275 580 520" fill="#fff" opacity=".6"/><text x="400" y="570" text-anchor="middle" font-size="24" fill="#555">サンプル ${i+1}</text></svg>`);return {id:filename,filename,path,date:`2026-10-0${i%2+1}`,title:['お庭で遊びました','みんなで工作'][i%2],postId:`sample-post-${i%2}`};});
-  store.ingest(photos,[{id:'sample-post-0',date:'2026-10-02',kind:'activities',title:'お庭で遊びました',body:'これは画面確認用のサンプルです。実際の写真・記録は使っていません。',path:'',attachments:[]}]);store.applyFaces(photos.slice(0,3).map(p=>({filename:p.filename,selected:true,reason:'顔認識で候補になりました'})));store.markSent([photos[0].id]);store.decide([photos[5].id],'exclude');
+  store.ingest(photos,[{id:'sample-post-0',date:'2026-10-02',kind:'activities',title:'お庭で遊びました',body:'これは画面確認用のサンプルです。実際の写真・記録は使っていません。',path:'',attachments:[]}]);store.applyFaces(photos.slice(0,3).map(p=>({filename:p.filename,person:'サンプル',selected:true,reason:'顔認識で候補になりました'})));store.markSent([photos[0].id]);store.decide([photos[5].id],'exclude');
 }
 async function ready():Promise<void>{
   const data=app.getPath('userData');mkdirSync(data,{recursive:true,mode:0o700});chmodSync(data,0o700);

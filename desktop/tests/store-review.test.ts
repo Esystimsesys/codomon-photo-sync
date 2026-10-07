@@ -26,12 +26,21 @@ test('missing historical uploads remain tombstoned when discovered later', () =>
   } finally { store.close(); }
 });
 
+test('sibling names and albums must not collide', () => {
+  {
+    const base = defaults('/fixture');
+    assert.deepEqual(validateSettings({ ...base, people: [{ name: ' 上の子 ', album: '' }, { name: '下の子', album: '' }] }).people, [{ name: '上の子', album: '' }, { name: '下の子', album: '' }]);
+    assert.throws(() => validateSettings({ ...base, people: [{ name: '上の子', album: '' }, { name: '上の子', album: 'x' }] }), /2回/);
+    assert.throws(() => validateSettings({ ...base, people: [{ name: '上の子', album: '共通' }, { name: '下の子', album: '共通' }] }), /違う名前/);
+    assert.throws(() => validateSettings({ ...base, people: [{ name: '上の子', album: base.album }] }), /違う名前/);
+  }
+});
 test('manual include and exclude survive face reanalysis and source corrections', () => {
   const store = new Store(':memory:');
   try {
     store.upsertPhotos([photo('include'), photo('exclude')]);
     store.decide(['include'], 'include'); store.decide(['exclude'], 'exclude');
-    store.applyFaces([{ filename: 'exclude.jpeg', selected: true, reason: 'face' }]);
+    store.applyFaces([{ filename: 'exclude.jpeg', person: '対象', selected: true, reason: 'face' }]);
     store.upsertPhotos([{ ...photo('include'), title: 'edited' }, { ...photo('exclude'), date: '2026-09-02' }]);
     assert.equal(chosen(store.photo('include')!), true);
     assert.equal(chosen(store.photo('exclude')!), false);

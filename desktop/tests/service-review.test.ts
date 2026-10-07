@@ -25,7 +25,7 @@ async function fixture(overrides: Partial<Settings> = {}) {
     manualLogin: async () => session,
     syncCodmon: async () => ({ photos: [], posts: [], errors: [] }),
     importIntoPhotos: async (_s, photos) => ({ imported: photos.map(p => p.id), errors: {} }),
-    analyzePhotos: async () => files.map(p => ({ filename: p.filename, selected: true, reason: '' })),
+    analyzePhotos: async () => files.map(p => ({ filename: p.filename, person: '対象', selected: true, reason: '' })),
     uploadMitene: async (_s, _session, photos, callback) => {
       uploads.push(photos.map(p => p.id)); callback.beforeSend(photos.map(p => p.id)); callback.onSent(photos.map(p => p.id));
     },
@@ -35,7 +35,7 @@ async function fixture(overrides: Partial<Settings> = {}) {
 }
 
 test('review mode never sends during sync; automatic mode sends selected only and preserves exclude', async () => {
-  const f = await fixture({ person: '対象', sendMode: 'review' });
+  const f = await fixture({ people: [{ name: '対象', album: '' }], sendMode: 'review' });
   try {
     f.store.decide(['second.jpeg'], 'exclude');
     await f.service.sync('2026-01-01', '2026-01-02');
@@ -49,7 +49,7 @@ test('review mode never sends during sync; automatic mode sends selected only an
   } finally { await f.close(); }
 });
 test('disabled Photos import preserves existing albums while read-only face selection and automatic sending remain available', async () => {
-  const f = await fixture({ person: '対象', importPhotos: false, sendMode: 'review' });
+  const f = await fixture({ people: [{ name: '対象', album: '' }], importPhotos: false, sendMode: 'review' });
   let imports = 0, albumWrites = 0;
   try {
     f.connections.importIntoPhotos = async () => { imports++; return { imported: [], errors: {} }; };
@@ -168,12 +168,31 @@ test('scheduler is disabled by default, catches up once per slot, and never over
     await f.service.scheduled(new Date(2026, 9, 4, 23, 0)); assert.equal(calls.length, 3);
   } finally { await f.close(); }
 });
+test('siblings: a photo is a candidate when either child is in it, and each child gets their own album', async () => {
+  const f = await fixture({ importPhotos: true, people: [{ name: '上の子', album: '' }, { name: '下の子', album: '' }] });
+  const albums: Record<string, string[]> = {};
+  try {
+    f.connections.updatePersonAlbum = async (_s, person, photos) => { albums[person.name] = photos.map(p => p.id); };
+    f.connections.analyzePhotos = async () => [
+      { filename: 'first.jpeg', person: '上の子', selected: true, reason: '' },
+      { filename: 'second.jpeg', person: '上の子', selected: false, reason: '顔が小さめです（20px・6人）' },
+      { filename: 'second.jpeg', person: '下の子', selected: true, reason: '' },
+    ];
+    // third.jpeg shows neither child: including it sends it, but it joins no child's album.
+    f.store.decide(['second.jpeg', 'third.jpeg'], 'include');
+    await f.service.analyze();
+    assert.deepEqual(albums, { 上の子: ['first.jpeg', 'second.jpeg'], 下の子: ['second.jpeg'] });
+    assert.deepEqual(f.store.eligible().map(p => p.id), ['first.jpeg', 'second.jpeg', 'third.jpeg']);
+    assert.equal(f.store.photo('first.jpeg')?.reason, '上の子が写っています');
+    assert.equal(f.store.photo('third.jpeg')?.reason, '対象の人物が見つかりません');
+  } finally { await f.close(); }
+});
 test('per-photo acquisition/import warnings still send other valid selected photos', async () => {
-  const f = await fixture({ sendMode: 'automatic', importPhotos: true, person: '対象' });
+  const f = await fixture({ sendMode: 'automatic', importPhotos: true, people: [{ name: '対象', album: '' }] });
   try {
     f.connections.syncCodmon = async (): Promise<SyncResult> => ({ photos: [], posts: [], errors: ['一枚取得失敗'] });
     f.connections.importIntoPhotos = async () => ({ imported: ['first.jpeg'], errors: { 'second.jpeg': 'Photos rejected' } });
-    f.connections.analyzePhotos = async () => [{ filename: 'first.jpeg', selected: true, reason: '' }];
+    f.connections.analyzePhotos = async () => [{ filename: 'first.jpeg', person: '対象', selected: true, reason: '' }];
     await assert.rejects(f.service.sync('2026-01-01', '2026-01-02'), /一部に問題/);
     assert.deepEqual(f.uploads, [['first.jpeg']]);
     assert.equal(f.store.photo('first.jpeg')?.uploadState, 'sent');
@@ -183,9 +202,9 @@ test('per-photo acquisition/import warnings still send other valid selected phot
   } finally { await f.close(); }
 });
 test('failed face read retains manual decisions and blocks stale automatic selections', async () => {
-  const f = await fixture({ sendMode: 'automatic', person: '対象' });
+  const f = await fixture({ sendMode: 'automatic', people: [{ name: '対象', album: '' }] });
   try {
-    f.store.applyFaces([{ filename: 'first.jpeg', selected: true, reason: '' }]);
+    f.store.applyFaces([{ filename: 'first.jpeg', person: '対象', selected: true, reason: '' }]);
     f.store.decide(['second.jpeg'], 'exclude');
     f.connections.analyzePhotos = async () => { throw new Error('写真ライブラリを読めません'); };
     await assert.rejects(f.service.sync('2026-01-01', '2026-01-02'), /写真ライブラリ/);

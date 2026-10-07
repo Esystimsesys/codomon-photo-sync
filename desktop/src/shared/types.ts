@@ -4,8 +4,8 @@ export type UploadState = 'pending' | 'sending' | 'sent' | 'uncertain' | 'skippe
 export interface Settings {
   saveRoot: string;
   album: string;
-  person: string;
-  personAlbum: string;
+  /** 写真.appの「ピープル」の名前と、その子の写真をまとめるアルバム名（空なら「取り込み先（名前）」）。きょうだいは並べて登録する。 */
+  people: Person[];
   photosLibrary: string;
   importPhotos: boolean;
   sendMode: SendMode;
@@ -20,14 +20,15 @@ export interface Settings {
   faceMaxPeople: number;
   setupComplete: boolean;
 }
+export interface Person { name: string; album: string; }
 export interface ArchivePhoto { id: string; filename: string; path: string; date: string; title: string; postId: string; }
 export interface Photo extends ArchivePhoto {
   decision: Decision; autoSelected: boolean; reason: string; uploadState: UploadState;
   imported: boolean; importError: string | null; sentAt: string | null;
 }
-export interface ArchivePost { id: string; date: string; kind: string; title: string; body: string; path: string; attachments: string[]; author?: string; }
+export interface ArchivePost { id: string; date: string; kind: string; title: string; body: string; path: string; attachments: string[]; author?: string; children?: string[]; }
 export interface SyncResult { photos: ArchivePhoto[]; posts: ArchivePost[]; errors: string[]; }
-export interface FaceResult { filename: string; selected: boolean; reason: string; }
+export interface FaceResult { filename: string; person: string; selected: boolean; reason: string; }
 export interface Job { id: number; kind: string; startedAt: string; endedAt: string | null; status: 'running' | 'success' | 'error'; message: string; }
 export interface Snapshot {
   settings: Settings; photos: Photo[]; posts: ArchivePost[]; jobs: Job[];

@@ -6,7 +6,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import piexif from 'piexifjs';
-import type { ArchivePhoto, ArchivePost, SyncResult, FaceResult, Settings } from '../shared/types';
+import type { ArchivePhoto, ArchivePost, SyncResult, FaceResult, Person, Settings } from '../shared/types';
+import { personAlbum } from './store';
 
 export type Session = Awaited<ReturnType<BrowserContext['storageState']>>;
 export interface ConnectorOptions {
@@ -160,6 +161,7 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
     if (servicesResponse.status() !== 200) throw new Error('施設一覧を取得できません');
     const services = (await servicesResponse.json()).data;
     if (!services || typeof services !== 'object' || Array.isArray(services) || !Object.keys(services).length) throw new Error('利用可能な施設を確認できません');
+    const children = await childNames(request);
     const seen = new Set<string>();
     const photoSources = new Map<string, string>();
     for (const serviceId of Object.keys(services)) for (const [start, end] of ranges) {
@@ -173,6 +175,7 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
         if (seen.has(id)) continue; seen.add(id);
         const date = entryDate(item), title = toText(item.title), kind = String(item.timeline_kind || 'unknown');
         const author = toText(item.insert_administrator_name);
+        const names = [...new Set((Array.isArray(item.array_member_id) ? item.array_member_id : [item.member_id]).map(id => children.get(String(id))).filter((n): n is string => !!n))];
         const dir = path.join(settings.saveRoot, date);
         const stem = `${safeFilename(id, 200)}-${createHash('sha256').update(id).digest('hex').slice(0, 12)}`;
         const attachments: string[] = [];
@@ -221,12 +224,26 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
           const link = (dest: string) => path.relative(path.dirname(markdown), dest).split(path.sep).map(encodeURIComponent).join('/');
           const photoLinks = result.photos.filter(p => p.postId === id).map(p => `![写真](${link(p.path)})`);
           const attachmentLinks = attachments.map(p => `[添付ファイル](${link(p)})`);
-          await atomicWrite(markdown, `# ${date} ${title}\n\n${kind}${author ? `\n\n投稿者: ${author}` : ''}\n\n${body}\n\n${[...photoLinks, ...attachmentLinks].join('\n\n')}\n`);
-          result.posts.push({ id, date, kind, title, body, path: markdown, attachments, ...(author ? { author } : {}) });
+          await atomicWrite(markdown, `# ${date} ${title}\n\n${kind}${author ? `\n\n投稿者: ${author}` : ''}${names.length ? `\n\n対象: ${names.join('・')}` : ''}\n\n${body}\n\n${[...photoLinks, ...attachmentLinks].join('\n\n')}\n`);
+          result.posts.push({ id, date, kind, title, body, path: markdown, attachments, ...(author ? { author } : {}), ...(names.length ? { children: names } : {}) });
         } catch (e) { result.errors.push(`${date} 記録保存: ${errorText(e)}`); }
       }
     }
     return result;
+}
+/** member_id → the child's name. Names only label records, so a failure here never stops archiving. */
+export async function childNames(request: Pick<BrowserContext['request'], 'get'>): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  try {
+    const r = await request.get(`${API}/children/?__env__=myapp`);
+    const data = r.status() === 200 ? (await r.json()).data : null;
+    for (const child of Array.isArray(data) ? data : []) {
+      const name = [child?.nickname, child?.name].find(n => typeof n === 'string' && n.trim())?.trim();
+      for (const relation of Array.isArray(child?.child_member_relations) ? child.child_member_relations : [])
+        if (name && relation?.member_id != null) names.set(String(relation.member_id), name);
+    }
+  } catch { /* Keep archiving without labels. */ }
+  return names;
 }
 function errorText(e: unknown): string { return e instanceof Error ? e.message : '処理に失敗しました'; }
 
@@ -271,7 +288,7 @@ export function judgeFace(px: number, ratio: number, people: number, s: Pick<Set
 }
 function identifier(value: string): string { return `"${value.replaceAll('"', '""')}"`; }
 export function readFaceResults(db: DatabaseSync, settings: Settings): FaceResult[] {
-  if (!settings.person) return [];
+  if (!settings.people.length) return [];
   const pk = db.prepare('SELECT Z_PK FROM ZGENERICALBUM WHERE ZTITLE = ? AND ZTRASHEDSTATE = 0 ORDER BY ZCACHEDCOUNT DESC LIMIT 1').get(settings.album)?.Z_PK;
   if (!pk) return [];
   let join: { table: string; album: string; asset: string } | undefined;
@@ -286,14 +303,15 @@ export function readFaceResults(db: DatabaseSync, settings: Settings): FaceResul
   const groups = new Map<string, typeof rows>();
   for (const r of rows) { const key = String(r.asset); groups.set(key, [...(groups.get(key) || []), r]); }
   const out: FaceResult[] = [];
-  for (const dets of groups.values()) {
-    const mine = dets.filter(r => r.person === settings.person && r.name);
+  for (const dets of groups.values()) for (const { name: person } of settings.people) {
+    // Siblings in one photo are judged separately; each one's face is compared with the largest face in it.
+    const mine = dets.filter(r => r.person === person && r.name);
     if (!mine.length) continue;
     const best = mine.reduce((a, b) => Number(a.size) >= Number(b.size) ? a : b);
     const largest = Math.max(...dets.map(r => Number(r.size) || 0));
     const px = Number(best.size) * Number(best.width), ratio = largest > 0 ? Number(best.size) / largest : 0;
     const reason = judgeFace(px, ratio, dets.length, settings);
-    out.push({ filename: String(best.name), selected: !reason, reason });
+    out.push({ filename: String(best.name), person, selected: !reason, reason });
   }
   return out;
 }
@@ -353,17 +371,16 @@ export interface AlbumAdapter {
   run(body: string): Promise<{ stdout: string }>;
   albumFiles(album: string): Promise<Set<string>>;
 }
-export async function updatePersonAlbum(settings: Settings, selected: ArchivePhoto[]): Promise<void> {
+export async function updatePersonAlbum(settings: Settings, person: Person, selected: ArchivePhoto[]): Promise<void> {
   if (process.platform !== 'darwin') throw new Error('写真.appのアルバム更新はMacのみ対応しています');
-  await updatePersonAlbumWith(settings, selected, {
+  await updatePersonAlbumWith(settings, person, selected, {
     run: async body => exec('/usr/bin/osascript', ['-e', `with timeout of 900 seconds\ntell application "Photos"\n${body}\nend tell\nend timeout`], { timeout: 910_000 }),
     albumFiles: albumFilenames,
   });
 }
-export async function updatePersonAlbumWith(settings: Settings, selected: ArchivePhoto[], adapter: AlbumAdapter): Promise<void> {
+export async function updatePersonAlbumWith(settings: Pick<Settings, 'album'>, person: Person, selected: ArchivePhoto[], adapter: AlbumAdapter): Promise<void> {
   const { run, albumFiles } = adapter;
-  if (!settings.person) return;
-  const target = settings.personAlbum || `${settings.album}（${settings.person}）`;
+  const target = personAlbum(settings.album, person);
   if (target === settings.album) throw new Error('人物アルバムと取り込み先には異なる名前を指定してください');
   const { stdout: counts } = await run(`return ((count of (every album whose name is ${appleScriptString(settings.album)})) as text) & "," & ((count of (every album whose name is ${appleScriptString(target)})) as text)`);
   const [sourceCount, targetCount] = counts.trim().split(',').map(Number);

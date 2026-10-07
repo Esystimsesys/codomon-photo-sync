@@ -15,11 +15,11 @@ try{
   assert.equal(await page.title(),metadata.build.productName,'current product name');
   let s=await page.evaluate(()=>window.desktop.snapshot());assert.equal(s.settings.setupComplete,false);assert.equal(s.settings.sendMode,'review');
   assert.equal(await page.evaluate(()=>typeof window.require),'undefined');
-  await page.evaluate(async()=>{const s=await window.desktop.snapshot();await window.desktop.action({type:'settings',settings:{...s.settings,setupComplete:true,person:'Fixture Person',importPhotos:false}});});
-  s=await page.evaluate(()=>window.desktop.snapshot());assert.equal(s.settings.person,'Fixture Person');
+  await page.evaluate(async()=>{const s=await window.desktop.snapshot();await window.desktop.action({type:'settings',settings:{...s.settings,setupComplete:true,people:[{name:'Fixture Person',album:''}],importPhotos:false}});});
+  s=await page.evaluate(()=>window.desktop.snapshot());assert.deepEqual(s.settings.people,[{name:'Fixture Person',album:''}]);
   const blocked=await page.evaluate(async()=>{try{await window.desktop.action({type:'sync'});return false;}catch{return true;}});assert.ok(blocked);
   await app.close();app=await launch();const again=await app.firstWindow();await again.waitForFunction(()=>!!window.desktop);
-  assert.equal((await again.evaluate(()=>window.desktop.snapshot())).settings.person,'Fixture Person');
+  assert.deepEqual((await again.evaluate(()=>window.desktop.snapshot())).settings.people,[{name:'Fixture Person',album:''}]);
   await app.close();app=await launch(['--demo']);const demo=await app.firstWindow();await demo.waitForFunction(async()=>window.desktop&&(await window.desktop.snapshot()).photos.length===6);
   await demo.getByRole('button',{name:'写真',exact:true}).click();
   await mkdir('test-results',{recursive:true});await demo.screenshot({path:'test-results/native-desktop.png',fullPage:true});
