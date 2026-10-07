@@ -44,6 +44,9 @@ jobs:
         run: |
           packaged_app=$(find release -path '*/Contents/MacOS/おむかえフォト' -type f -print -quit)
           CODOMON_PACKAGED_EXECUTABLE="$PWD/$packaged_app" node scripts/smoke-electron.mjs
+      # Intel builds are only verified here, so check the arch-specific bundled browser too.
+      - name: Smoke test the bundled browser
+        run: node scripts/smoke-browser.mjs "$(find release -maxdepth 2 -name 'おむかえフォト.app' -print -quit)"
       - uses: actions/upload-artifact@v4
         with:
           name: mac-${{ matrix.os }}
@@ -89,6 +92,7 @@ jobs:
           - 署名・公証をしていないため、初回は開発元を確認できない警告が出ます。配布元を確認してから、システム設定の「プライバシーとセキュリティ」で個別に許可してください。
           - 更新後に「フルディスクアクセス」や写真.appの操作許可をやり直す必要がある場合があります。
           - Apple Silicon の Mac は `arm64`、Intel の Mac は `x64` のファイルを使います。
+          - Intel 版（`x64`）は、自動テストでの確認だけで公開しています。
           NOTES
           prerelease=""
           case "$tag" in *-*) prerelease="--prerelease" ;; esac
