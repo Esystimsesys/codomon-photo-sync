@@ -43,6 +43,8 @@ export class Service {
   syncQuota(now=new Date()): {date:string; count:number} {
     const date=dayNow(now), saved=this.store.get<{date:string;count:number}>('codmonDailyQuota');
     if(saved?.date===date)return saved;
+    // 記録が始まってからは、日付が変われば0回から。履歴から数え直すのは、上限のない版から上げた最初の1回だけ。
+    if(saved){const quota={date,count:0};this.store.set('codmonDailyQuota',quota);return quota;}
     const rows=this.store.db.prepare("SELECT startedAt FROM jobs WHERE kind='写真・記録を取得'").all();
     const count=rows.filter(row=>dayNow(new Date(String(row.startedAt)))===date).length;
     const quota={date,count};this.store.set('codmonDailyQuota',quota);return quota;
