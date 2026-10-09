@@ -1,4 +1,4 @@
-import { chromium, type BrowserContext, type Page } from 'playwright';
+import { chromium, type APIResponse, type BrowserContext, type Page } from 'playwright';
 import { DatabaseSync } from 'node:sqlite';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -106,6 +106,11 @@ export async function atomicWrite(filename: string, data: string | Buffer): Prom
   } finally { await fs.rm(temp, { force: true }); }
 }
 async function exists(filename: string): Promise<boolean> { try { await fs.access(filename); return true; } catch { return false; } }
+// Playwright retains response bodies until disposed, even after body()/json() returns.
+async function consumeResponse<T>(response: APIResponse, read: (response: APIResponse) => T | Promise<T>): Promise<T> {
+  try { return await read(response); }
+  finally { await response.dispose(); }
+}
 async function contextFor(session: Session | undefined, options: ConnectorOptions, headless = true) {
   const browser = await chromium.launch({ headless, executablePath: options.executablePath });
   try { return { browser, context: await browser.newContext({ storageState: session, locale: 'ja-JP' }) }; }
@@ -122,8 +127,7 @@ export async function manualLogin(provider: 'codmon' | 'mitene', options: Connec
       if (!browser.isConnected() || page.isClosed()) throw new Error('ログイン画面が閉じられました');
       let authenticated = false;
       if (provider === 'codmon') {
-        const response = await context.request.get(`${API}/my/`, { timeout: 15_000 });
-        authenticated = response.status() === 200;
+        authenticated = await consumeResponse(await context.request.get(`${API}/my/`, { timeout: 15_000 }), response => response.status() === 200);
       } else {
         const u = new URL(page.url());
         authenticated = u.hostname === 'mitene.us' && u.pathname.startsWith('/web/uploader') && await page.locator('input[type=file]').count() === 1;
@@ -138,9 +142,10 @@ export async function fetchTimeline(request: Pick<BrowserContext['request'], 'ge
   const items: Item[] = [];
   for (let page = 1; page <= 50; page++) {
     const query = new URLSearchParams({ listpage:String(page), 'search_type[]':'new_all', start_date:start, end_date:end, service_id:serviceId, current_flag:'0', use_image_edge:'true', bookmark_only:'false', __env__:'myapp' });
-    const r = await request.get(`${API}/timeline/?${query}`);
-    if (r.status() !== 200) throw new Error(`記録の取得に失敗しました（HTTP ${r.status()}）`);
-    const data = await r.json();
+    const data = await consumeResponse(await request.get(`${API}/timeline/?${query}`), async r => {
+      if (r.status() !== 200) throw new Error(`記録の取得に失敗しました（HTTP ${r.status()}）`);
+      return r.json();
+    });
     if (!Array.isArray(data.data)) throw new Error('記録の応答形式が変わっています');
     items.push(...data.data);
     if (!data.next_page) return items;
@@ -160,10 +165,13 @@ export async function syncCodmon(settings: Settings, session: Session, startDate
 export async function syncCodmonRequest(settings: Settings, request: BrowserContext['request'], startDate: string, endDate: string, options: ConnectorOptions = {}): Promise<SyncResult> {
   const ranges = monthlyIntervals(startDate, endDate);
   const result: SyncResult = { photos: [], posts: [], errors: [] };
-    if ((await request.get(`${API}/my/`)).status() !== 200) throw new Error('コドモンに再ログインしてください');
-    const servicesResponse = await request.get(`${API}/services/?__env__=myapp&use_image_edge=true`);
-    if (servicesResponse.status() !== 200) throw new Error('コドモンの施設情報を取得できません');
-    const services = (await servicesResponse.json()).data;
+    await consumeResponse(await request.get(`${API}/my/`), r => {
+      if (r.status() !== 200) throw new Error('コドモンに再ログインしてください');
+    });
+    const services = await consumeResponse(await request.get(`${API}/services/?__env__=myapp&use_image_edge=true`), async r => {
+      if (r.status() !== 200) throw new Error('コドモンの施設情報を取得できません');
+      return (await r.json()).data;
+    });
     if (!services || typeof services !== 'object' || Array.isArray(services) || !Object.keys(services).length) throw new Error('利用できる施設が見つかりません');
     const children = await childNames(request);
     const seen = new Set<string>();
@@ -183,6 +191,7 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
         const dir = path.join(settings.saveRoot, date);
         const stem = `${safeFilename(id, 200)}-${createHash('sha256').update(id).digest('hex').slice(0, 12)}`;
         const attachments: string[] = [];
+        const photoPaths = new Set<string>();
         for (const photo of timelinePhotos(item)) {
           try {
             const url = codmonUrl(photo.url), filename = photoFilename(url);
@@ -197,15 +206,17 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
             const collision = previous !== undefined && previous !== canonical;
             const dest = collision ? path.join(dir, '重複名の確認', safeFilename(`${createHash('sha256').update(canonical).digest('hex').slice(0,12)}-${filename}`)) : path.join(dir, filename);
             if (!await exists(dest)) {
-              const r = await request.get(url);
-              if (r.status() !== 200) throw new Error(`HTTP ${r.status()}`);
-              const bytes = await r.body();
+              const bytes = await consumeResponse(await request.get(url), async r => {
+                if (r.status() !== 200) throw new Error(`HTTP ${r.status()}`);
+                return r.body();
+              });
               if (bytes[0] !== 0xff || bytes[1] !== 0xd8) throw new Error('JPEG画像ではありません');
               await atomicWrite(dest, date === 'unknown-date' ? bytes : stampExif(bytes, item));
             }
             if (collision) { result.errors.push(`${date}: 同じファイル名の異なる写真を別フォルダに保存しました（${filename}）。確認が必要です`); continue; }
             if (previous === undefined) await atomicWrite(sourceFile, JSON.stringify({ filename, pathname: canonical }));
             photoSources.set(filename, canonical);
+            photoPaths.add(dest);
             if (date === 'unknown-date') result.errors.push('日付が分からない写真を保存しました。この写真の「写真」アプリへの取り込みは保留しています');
             if (!result.photos.some(p => p.id === filename)) result.photos.push({ id: filename, filename, path: dest, date, title, postId: id, postedDate: postedDate(item) });
           } catch (e) { result.errors.push(`${date} 写真: ${errorText(e)}`); }
@@ -214,9 +225,11 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
           try {
             const url = codmonUrl(item.file_url), dest = path.join(dir, '添付', safeFilename(`${stem}-${decodeURIComponent(new URL(url).pathname.split('/').pop() || 'file')}`));
             if (!await exists(dest)) {
-              const r = await request.get(url);
-              if (r.status() !== 200 || /text\/html/i.test(r.headers()['content-type'] || '')) throw new Error('添付を取得できません');
-              await atomicWrite(dest, await r.body());
+              const bytes = await consumeResponse(await request.get(url), async r => {
+                if (r.status() !== 200 || /text\/html/i.test(r.headers()['content-type'] || '')) throw new Error('添付を取得できません');
+                return r.body();
+              });
+              await atomicWrite(dest, bytes);
             }
             attachments.push(dest);
           } catch (e) { result.errors.push(`${date} 添付: ${errorText(e)}`); }
@@ -226,7 +239,7 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
           // Per-post files preserve earlier services, months and records on partial retrieval failures.
           await atomicWrite(path.join(dir, '記録', `${stem}.json`), JSON.stringify(item, null, 2));
           const link = (dest: string) => path.relative(path.dirname(markdown), dest).split(path.sep).map(encodeURIComponent).join('/');
-          const photoLinks = result.photos.filter(p => p.postId === id).map(p => `![写真](${link(p.path)})`);
+          const photoLinks = [...photoPaths].map(p => `![写真](${link(p)})`);
           const attachmentLinks = attachments.map(p => `[添付ファイル](${link(p)})`);
           await atomicWrite(markdown, `# ${date} ${title}\n\n${kind}${author ? `\n\n投稿者: ${author}` : ''}${names.length ? `\n\n対象: ${names.join('・')}` : ''}\n\n${body}\n\n${[...photoLinks, ...attachmentLinks].join('\n\n')}\n`);
           result.posts.push({ id, date, kind, title, body, path: markdown, attachments, ...(author ? { author } : {}), ...(names.length ? { children: names } : {}) });
@@ -239,8 +252,7 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
 export async function childNames(request: Pick<BrowserContext['request'], 'get'>): Promise<Map<string, string>> {
   const names = new Map<string, string>();
   try {
-    const r = await request.get(`${API}/children/?__env__=myapp`);
-    const data = r.status() === 200 ? (await r.json()).data : null;
+    const data = await consumeResponse(await request.get(`${API}/children/?__env__=myapp`), async r => r.status() === 200 ? (await r.json()).data : null);
     for (const child of Array.isArray(data) ? data : []) {
       const name = [child?.nickname, child?.name].find(n => typeof n === 'string' && n.trim())?.trim();
       for (const relation of Array.isArray(child?.child_member_relations) ? child.child_member_relations : [])

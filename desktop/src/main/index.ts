@@ -80,7 +80,6 @@ async function saveSettings(input:unknown):Promise<void>{
   const next=validateSettings(input),before=store.settings();
   if(store.photos().length&&next.saveRoot!==before.saveRoot)throw new Error('取り込み済みの写真があるため、保存先は変更できません');
   if(!demo&&!test&&next.launchAtLogin!==before.launchAtLogin){if(!app.isPackaged&&next.launchAtLogin)throw new Error('ログイン時の起動は、アプリケーションフォルダに配置した配布版で設定してください');app.setLoginItemSettings({openAtLogin:next.launchAtLogin});}
-  if(JSON.stringify(next.people.map(p=>p.name))!==JSON.stringify(before.people.map(p=>p.name))||next.album!==before.album||next.photosLibrary!==before.photosLibrary)store.applyFaces([]);
   store.saveSettings(next);changed();
 }
 async function action(raw:unknown):Promise<unknown>{

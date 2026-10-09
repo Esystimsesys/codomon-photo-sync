@@ -83,6 +83,51 @@ test('disabled Photos import preserves existing albums while read-only face sele
     assert.ok(f.store.photos().every(p => !p.imported));
   } finally { await f.close(); }
 });
+test('changing the Photos destination reimports existing photos without reopening sent photos or losing manual choices', async () => {
+  for (const changed of [{album:'新しい園アルバム'}, {photosLibrary:'/fixture/New.photoslibrary/database/Photos.sqlite'}]) {
+    const f = await fixture({importPhotos:true,people:[{name:'対象',album:''}],sendMode:'automatic'});
+    try {
+      f.store.markImported(f.files.map(p=>p.id), {});
+      f.store.applyFaces(f.files.map(p=>({filename:p.filename,person:'対象',selected:true,reason:''})));
+      f.store.decide(['second.jpeg'], 'exclude');
+      f.store.decide(['third.jpeg'], 'include');
+      f.store.markSent(['first.jpeg']);
+      const sentAt = f.store.photo('first.jpeg')!.sentAt;
+      const next = {...f.store.settings(),...changed};
+      f.store.saveSettings(next);
+      assert.ok(f.store.photos().every(p=>!p.imported && !p.autoSelected));
+      const imports: string[][] = [];
+      f.connections.importIntoPhotos = async (settings, photos) => {
+        assert.equal(settings.album, next.album);
+        assert.equal(settings.photosLibrary, next.photosLibrary);
+        imports.push(photos.map(p=>p.id));
+        return {imported:photos.map(p=>p.id),errors:{}};
+      };
+      f.connections.analyzePhotos = async () => {
+        assert.equal(imports.length, 1, 'existing photos must be checked in the new destination before face analysis');
+        return f.files.map(p=>({filename:p.filename,person:'対象',selected:true,reason:''}));
+      };
+      await f.service.analyze();
+      assert.deepEqual(imports, [f.files.map(p=>p.id)]);
+      assert.ok(f.store.photos().every(p=>p.imported && p.autoSelected));
+      assert.equal(f.store.photo('second.jpeg')!.decision, 'exclude');
+      assert.equal(f.store.photo('third.jpeg')!.decision, 'include');
+      assert.equal(f.store.photo('first.jpeg')!.sentAt, sentAt);
+      assert.deepEqual(f.uploads, [['third.jpeg']]);
+    } finally {await f.close();}
+  }
+});
+test('unrelated settings and child-name changes retain Photos import status', async () => {
+  const f = await fixture({people:[{name:'対象',album:''}]});
+  try {
+    f.store.markImported(f.files.map(p=>p.id), {});
+    f.store.applyFaces(f.files.map(p=>({filename:p.filename,person:'対象',selected:true,reason:''})));
+    f.store.saveSettings({...f.store.settings(),syncTimes:['08:00']});
+    assert.ok(f.store.photos().every(p=>p.imported && p.autoSelected));
+    f.store.saveSettings({...f.store.settings(),people:[{name:'別の名前',album:''}]});
+    assert.ok(f.store.photos().every(p=>p.imported && !p.autoSelected));
+  } finally {await f.close();}
+});
 test('explicit send is an intentional manual include even when face selection excludes or is pending', async () => {
   const f = await fixture();
   try {
@@ -231,10 +276,11 @@ test('failed face read retains manual decisions and blocks stale automatic selec
   } finally { await f.close(); }
 });
 
-test('daily acquisition quota covers manual and scheduled work, survives restart and time edits, then resets next day', async () => {
+test('daily acquisition quota covers manual and scheduled work, survives restart and time edits, then resets next day', async t => {
+  const day=new Date(2026,9,8,10,0);
+  t.mock.timers.enable({apis:['Date'],now:day});
   const f = await fixture({ autoSync: true, miteneEnabled: false, syncTimes: ['09:00','18:00'], faceTimes: ['13:00'] });
   let acquisitions=0,faces=0;
-  const day=new Date(2026,9,8,10,0);
   try {
     f.connections.syncCodmon=async()=>{acquisitions++;return {photos:[],posts:[],errors:[]};};
     await f.service.sync(undefined,undefined,day);
@@ -246,7 +292,8 @@ test('daily acquisition quota covers manual and scheduled work, survives restart
     await restarted.scheduled(new Date(2026,9,8,20,0));
     await restarted.scheduled(new Date(2026,9,8,20,1));
     assert.equal(acquisitions,2);assert.equal(faces,1,'face updates keep working after the acquisition quota is used');
-    await restarted.scheduled(new Date(2026,9,9,12,0));
+    t.mock.timers.setTime(new Date(2026,9,9,12,0).getTime());
+    await restarted.scheduled();
     assert.equal(acquisitions,3);assert.deepEqual(f.store.get('codmonDailyQuota'),{date:'2026-10-09',count:1});
   } finally {await f.close();}
 });

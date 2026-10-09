@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import piexif from 'piexifjs';
@@ -52,7 +52,7 @@ test('atomic archive writes replace whole files', async () => {
 });
 function request(pages: any[]) {
   let calls = 0;
-  return { get: async () => { const value = pages[Math.min(calls++, pages.length-1)]; return {status:()=>value.status || 200,json:async()=>value}; } } as any;
+  return { get: async () => { const value = pages[Math.min(calls++, pages.length-1)]; return {dispose:async()=>{},status:()=>value.status || 200,json:async()=>value}; } } as any;
 }
 test('pagination returns complete results and never a partial set on failure', async () => {
   assert.deepEqual(await fetchTimeline(request([{data:[{id:1}],next_page:true},{data:[{id:2}],next_page:false}]),'s','2026-01-01','2026-01-31'),[{id:1},{id:2}]);
@@ -120,7 +120,7 @@ test('archive preserves old records during failed month/service, all kinds, unda
       else if (month === '2026-01-01') data = {data:[null, {id:1,timeline_kind:'activities',display_date:'2026-01-15',overview:'一月',photos:[{url:'https://image.codmon.com/a.jpeg'}]}, {id:2,timeline_kind:'topics',display_date:'2026-01-15',content:'写真販売',photos:{lists:[{url:'https://image.codmon.com/SALE.jpeg'}]}}, {id:3,timeline_kind:'bills',display_date:'2026-01-15',data:[{name:'請求',amount:0}],file_url:'/missing.pdf'}]};
       else data = {data:[{id:4,timeline_kind:'comments',content:'日付なし',photos:[{url:'https://image.codmon.com/unknown.jpeg'}]}]};
     } else if (u.pathname.endsWith('.pdf')) status = 500;
-    return {status:()=>status,json:async()=>data,body:async()=>jpeg,headers:()=>({'content-type':'image/jpeg'})};
+    return {dispose:async()=>{},status:()=>status,json:async()=>data,body:async()=>jpeg,headers:()=>({'content-type':'image/jpeg'})};
   }} as any;
   try {
     const s = {...settings,saveRoot:dir};
@@ -147,7 +147,7 @@ test('different source paths sharing a basename are preserved separately and fla
   const dir = await mkdtemp(path.join(tmpdir(),'codomon-collision-'));
   const jpeg = Buffer.from([0xff,0xd8,0xff,0xda,0,2,0xff,0xd9]);
   const fake = {get:async(raw: string) => { const u = new URL(raw); return {
-    status:()=>200, headers:()=>({'content-type':'image/jpeg'}),body:async()=>jpeg,
+    dispose:async()=>{},status:()=>200, headers:()=>({'content-type':'image/jpeg'}),body:async()=>jpeg,
     json:async()=>u.pathname.endsWith('/services/')?{data:{s:{}}}:u.pathname.endsWith('/timeline/')?{data:[
       {id:1,display_date:'2026-01-01',photos:[{url:'https://image.codmon.com/first/same.jpeg'}]},
       {id:2,display_date:'2026-01-01',photos:[{url:'https://image.codmon.com/second/same.jpeg'}]},
@@ -161,10 +161,88 @@ test('different source paths sharing a basename are preserved separately and fla
   } finally { await rm(dir,{recursive:true,force:true}); }
 });
 
+test('each record links its shared photos while the upload list stays deduplicated', async () => {
+  const root = await mkdtemp(path.join(tmpdir(),'codomon-shared-photo-'));
+  const jpeg = Buffer.from([0xff,0xd8,0xff,0xda,0,2,0xff,0xd9]);
+  let downloads = 0;
+  const fake = {get:async(raw: string) => ({
+    dispose:async()=>{}, status:()=>200,
+    body:async()=>{ downloads++; return jpeg; },
+    json:async()=>raw.includes('/services/')?{data:{s:{}}}:raw.includes('/timeline/')?{data:[1,2].map(id=>({
+      id, timeline_kind:'activities', display_date:'2026-01-01',
+      photos:[{url:'https://image.codmon.com/shared.jpeg'},{url:'https://image.codmon.com/shared.jpeg'}],
+    }))}:{},
+  })} as any;
+  try {
+    for (let run = 0; run < 2; run++) {
+      const result = await syncCodmonRequest({...settings,saveRoot:root},fake,'2026-01-01','2026-01-01');
+      assert.deepEqual(result.errors,[]);
+      assert.equal(result.photos.length,1);
+      assert.equal(result.posts.length,2);
+      for (const post of result.posts) {
+        const markdown = await readFile(post.path,'utf8');
+        assert.equal(markdown.match(/!\[写真\]\(\.\.\/shared.jpeg\)/g)?.length,1);
+      }
+    }
+    assert.equal(downloads,1);
+  } finally { await rm(root,{recursive:true,force:true}); }
+});
+
+test('archive releases every response before the next request, including HTTP, decoding and write failures', async () => {
+  const jpeg = Buffer.from([0xff,0xd8,0xff,0xda,0,2,0xff,0xd9]);
+  const cases: { endpoint?: string; failure?: 'http'|'decode'|'format'|'write' }[] = [
+    {}, ...['my','services','children','timeline','photo','attachment'].flatMap(endpoint =>
+      (endpoint==='my'?['http']:['http','decode','format']).map(failure=>({endpoint,failure:failure as 'http'|'decode'|'format'}))),
+    {endpoint:'photo',failure:'write'}, {endpoint:'attachment',failure:'write'},
+  ];
+  for (const scenario of cases) {
+    const root = await mkdtemp(path.join(tmpdir(),'codomon-dispose-'));
+    let active = 0, requests = 0, disposed = 0;
+    const fake = {get:async(raw: string) => {
+      assert.equal(active,0,'the previous response must be released before requesting another');
+      active++; requests++;
+      const pathname = new URL(raw).pathname;
+      const endpoint = pathname.endsWith('.jpeg')?'photo':pathname.endsWith('.pdf')?'attachment':pathname.split('/').filter(Boolean).at(-1);
+      const failure = endpoint===scenario.endpoint ? scenario.failure : undefined;
+      let released = false;
+      const readable = () => { assert.equal(released,false); if (failure==='decode') throw new Error('synthetic decoding failure'); };
+      return {
+        status:()=>failure==='http'?500:200,
+        headers:()=>({'content-type':failure==='format'?'text/html':'application/pdf'}),
+        json:async()=>{
+          readable();
+          if (failure==='format') return {data:null};
+          return endpoint==='services'?{data:{s:{}}}:endpoint==='children'?{data:[]}:endpoint==='timeline'?{data:[{
+            id:1,display_date:'2026-01-01',photos:[{url:'https://image.codmon.com/photo.jpeg'}],file_url:'/attachment.pdf',
+          }]}:{};
+        },
+        body:async()=>{ readable(); return failure==='format'?Buffer.from('<html>'):endpoint==='photo'?jpeg:Buffer.from('synthetic PDF'); },
+        dispose:async()=>{ assert.equal(released,false,'dispose exactly once'); released=true; active--; disposed++; },
+      };
+    }} as any;
+    try {
+      if (scenario.failure==='write') {
+        const dateDir = path.join(root,'2026-01-01');
+        if (scenario.endpoint==='attachment') await mkdir(dateDir);
+        await writeFile(scenario.endpoint==='photo'?dateDir:path.join(dateDir,'添付'),'blocks the destination directory');
+      }
+      const sync = syncCodmonRequest({...settings,saveRoot:root},fake,'2026-01-01','2026-01-01');
+      if (scenario.endpoint==='my'||scenario.endpoint==='services') await assert.rejects(sync);
+      else {
+        const result = await sync;
+        if (!scenario.endpoint || scenario.endpoint==='children') assert.deepEqual(result.errors,[]);
+        else assert.ok(result.errors.length>0,JSON.stringify(scenario));
+      }
+      assert.equal(active,0,JSON.stringify(scenario));
+      assert.equal(disposed,requests,JSON.stringify(scenario));
+    } finally { await rm(root,{recursive:true,force:true}); }
+  }
+});
+
 test('records keep their author and the children they are about; a failed child list only drops the labels', async () => {
   const dir = await mkdtemp(path.join(tmpdir(),'codomon-children-'));
   const fake = (children: unknown) => ({get:async(raw: string) => { const u = new URL(raw); return {
-    status:()=>u.pathname.endsWith('/children/')&&!children?500:200, headers:()=>({}),body:async()=>Buffer.from(''),
+    dispose:async()=>{},status:()=>u.pathname.endsWith('/children/')&&!children?500:200, headers:()=>({}),body:async()=>Buffer.from(''),
     json:async()=>u.pathname.endsWith('/services/')?{data:{s:{}}}:u.pathname.endsWith('/children/')?children:u.pathname.endsWith('/timeline/')?{data:[
       {id:1,timeline_kind:'comments',display_date:'2026-01-01',content:'連絡',insert_administrator_name:'担任',array_member_id:['11']},
       {id:2,timeline_kind:'activities',display_date:'2026-01-01',overview:'散歩',array_member_id:['11','22']},
@@ -221,7 +299,7 @@ test('photo source collision remains detectable across separate sync runs withou
   const dir = await mkdtemp(path.join(tmpdir(),'codomon-persistent-source-'));
   const jpeg = Buffer.from([0xff,0xd8,0xff,0xda,0,2,0xff,0xd9]);
   let phase = 'first';
-  const fake = {get:async(raw: string) => ({status:()=>200,body:async()=>jpeg,headers:()=>({}),json:async()=>
+  const fake = {get:async(raw: string) => ({dispose:async()=>{},status:()=>200,body:async()=>jpeg,headers:()=>({}),json:async()=>
     raw.includes('/services/')?{data:{s:{}}}:raw.includes('/timeline/')?{data:[{id:phase,display_date:'2026-01-01',photos:[{url:`https://image.codmon.com/${phase}/same.jpeg?secret=synthetic-token`}]}]}:{}
   })} as any;
   try {
@@ -253,7 +331,7 @@ test('long UTF-8 final attachment names fit filesystem limits, preserve extensio
 test('archive saves long Japanese attachment names and long record IDs without truncating extension', async () => {
   const root = await mkdtemp(path.join(tmpdir(),'codomon-long-archive-'));
   const fileUrl = `/codmon/${encodeURIComponent('園のお知らせ'.repeat(80)+'.pdf')}`;
-  const fake = {get:async(raw:string)=>({status:()=>200,headers:()=>({'content-type':'application/pdf'}),body:async()=>Buffer.from('synthetic pdf'),json:async()=>
+  const fake = {get:async(raw:string)=>({dispose:async()=>{},status:()=>200,headers:()=>({'content-type':'application/pdf'}),body:async()=>Buffer.from('synthetic pdf'),json:async()=>
     raw.includes('/services/')?{data:{s:{}}}:raw.includes('/timeline/')?{data:[{id:'記録番号'.repeat(100),timeline_kind:'topics',display_date:'2026-01-01',file_url:fileUrl}]}:{}
   })} as any;
   try {

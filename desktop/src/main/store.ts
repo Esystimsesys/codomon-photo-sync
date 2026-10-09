@@ -88,7 +88,15 @@ export class Store {
     const before = this.settings(), next = validateSettings(s);
     // 開始日は画面からは変えられない。自動送信をオンにした日を残し、オンのまま保存しても動かさない。
     next.autoSendFrom = !autoSending(next) ? '' : autoSending(before) && before.autoSendFrom ? before.autoSendFrom : today;
-    this.set('settings', next);
+    const destinationChanged = next.album !== before.album || next.photosLibrary !== before.photosLibrary;
+    this.transaction(() => {
+      // Import status belongs to a destination, while manual choices and the send ledger belong to the photo.
+      if (destinationChanged) this.db.prepare('UPDATE photos SET imported=0,importError=NULL').run();
+      if (destinationChanged || JSON.stringify(next.people.map(p => p.name)) !== JSON.stringify(before.people.map(p => p.name))) {
+        this.db.prepare("UPDATE photos SET autoSelected=0,reason='顔認識の結果待ち'").run();
+      }
+      this.set('settings', next);
+    });
   }
   photos(): Photo[] { return this.db.prepare('SELECT * FROM photos ORDER BY date DESC, filename').all().map(r => ({ ...r, autoSelected: !!r.autoSelected, imported: !!r.imported })) as unknown as Photo[]; }
   photo(id: string): Photo | undefined { const r = this.db.prepare('SELECT * FROM photos WHERE id=?').get(id); return r ? { ...r, autoSelected: !!r.autoSelected, imported: !!r.imported } as unknown as Photo : undefined; }
