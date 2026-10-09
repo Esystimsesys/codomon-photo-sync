@@ -25,11 +25,12 @@ test('siblings: records filter by child, and children can be added and removed i
 test('manual selection persists when switching tabs', async ({page}) => {
  await page.goto('/'); await page.getByRole('button', {name:'写真', exact:true}).click();
  await expect(page.locator('.photo-card')).toHaveCount(3);
- await page.locator('[data-decision]').first().selectOption('exclude');
+ await expect(page.locator('.photo-card').nth(1).locator('.photo-children li')).toHaveText(['さくら','はると']);
+ await page.locator('[data-decision][data-value="exclude"]').first().click();
  await expect(page.locator('.photo-card')).toHaveCount(2);
- await page.getByRole('button', {name:/^選択外/}).click();
- await expect(page.locator('.photo-card')).toHaveCount(2);
- await expect(page.locator('[data-decision]').first()).toHaveValue('exclude');
+ await page.getByRole('button', {name:/^未選択/}).click();
+ await expect(page.locator('.photo-card')).toHaveCount(4);
+ await expect(page.locator('[data-decision][data-value="auto"]')).toHaveCount(2);
 });
 test('uncertain result requires explicit resolution', async ({page}) => {
  await page.goto('/'); await page.getByRole('button', {name:'確認する →', exact:true}).click();
@@ -40,7 +41,17 @@ test('uncertain result requires explicit resolution', async ({page}) => {
  await expect(page.locator('.photo-card')).toHaveCount(1);
  await page.getByRole('button', {name:'届いていた',exact:true}).click();
  await page.getByRole('button', {name:'送信済みにする',exact:true}).click();
- await expect(page.getByRole('heading', {name:'この条件に当てはまる写真はありません'})).toBeVisible();
+ await expect(page.getByRole('group', {name:'写真の絞り込み'})).toBeVisible();
+ await expect(page.getByRole('heading', {name:/^送信できたか確認が必要な写真/})).toHaveCount(0);
+});
+test('uncertain results can be resolved together for checked photos', async ({page}) => {
+ await page.goto('/'); await page.getByRole('button', {name:'確認する →', exact:true}).click();
+ await page.getByLabel('表示中の写真すべてにチェック').check();
+ await page.getByRole('group', {name:'チェックした写真の送信結果'}).getByRole('button', {name:'届いていた',exact:true}).click();
+ await expect(page.getByRole('dialog')).toContainText('届いていることを確かめた写真だけ');
+ await page.getByRole('button', {name:'送信済みにする',exact:true}).click();
+ await expect(page.getByRole('group', {name:'写真の絞り込み'})).toBeVisible();
+ await expect(page.getByRole('heading', {name:/^送信できたか確認が必要な写真/})).toHaveCount(0);
 });
 test('review is default, automatic requires confirmation and selected send has scope', async ({page}) => {
  await page.goto('/'); await page.getByRole('button', {name:'設定',exact:true}).click();
@@ -48,18 +59,31 @@ test('review is default, automatic requires confirmation and selected send has s
  await page.getByRole('button', {name:'みてねにログイン',exact:true}).click();
  await page.getByLabel('みてねへの送信を使う').check();
  await page.getByRole('radio', {name:/自動で送る/}).check();
- await expect(page.getByRole('dialog')).toContainText('これまでに取り込んだ写真');
+ await expect(page.getByRole('dialog')).toContainText('それより前の写真は自動では送りません');
  await page.getByRole('button', {name:'キャンセル',exact:true}).click();
  await page.getByRole('radio', {name:/確認してから送る/}).check();
  await expect(page.locator('#settings-save-state')).toHaveText('設定は保存済みです');
  await page.getByRole('button',{name:'ホーム',exact:true}).click(); await page.getByRole('button',{name:'設定',exact:true}).click();
  await expect(page.getByRole('radio',{name:/確認してから送る/})).toBeChecked();
  await page.getByRole('button', {name:'写真',exact:true}).click();
- await page.getByLabel('表示中の写真をすべて選ぶ').check();
+ await page.getByLabel('表示中の写真すべてにチェック').check();
  await page.getByRole('button', {name:'3枚を送信',exact:true}).click();
  await expect(page.getByRole('dialog')).toContainText('公開範囲：家族みんなに公開');
  await page.getByRole('dialog').getByRole('button', {name:'3枚を送信',exact:true}).click();
  await expect(page.locator('.photo-card')).toHaveCount(0);
+});
+test('automatic sending leaves earlier photos for review from home', async ({page}) => {
+ await page.goto('/'); await page.getByRole('button', {name:'設定',exact:true}).click();
+ await page.getByRole('radio', {name:/自動で送る/}).check();
+ await page.getByRole('dialog').getByRole('button', {name:'自動で送る',exact:true}).click();
+ await expect(page.locator('#settings-save-state')).toHaveText('設定は保存済みです');
+ await page.getByRole('button', {name:'ホーム',exact:true}).click();
+ await page.getByRole('button', {name:'一覧を見る →',exact:true}).click();
+ await expect(page.getByRole('heading', {name:/^みてね自動送信設定前の写真/})).toBeVisible();
+ await expect(page.locator('.photo-card')).toHaveCount(3);
+ await page.getByRole('button', {name:'← 写真一覧に戻る',exact:true}).click();
+ await expect(page.getByRole('button', {name:'送信済み・送らない（1枚）',exact:true})).toHaveAttribute('aria-pressed','true');
+ await expect(page.getByRole('button', {name:'送信待ち（0枚）',exact:true})).toBeVisible();
 });
 test('narrow layout stays within viewport and navigation works', async ({page}) => {
  await page.setViewportSize({width: 390,height:844}); await page.goto('/');
@@ -138,7 +162,8 @@ test('failed login recovery opens settings and does not start sync', async ({pag
 for(const scenario of ['send-pending','send-uncertain']) test(`send failure recovers to ${scenario}`, async ({page}) => {
  await nativeFixture(page,true,scenario); await page.goto('/');
  await page.getByRole('button', {name:'送信結果を確認',exact:true}).click();
- await expect(page.getByRole('button', {name:scenario === 'send-pending' ? /^未送信/ : /^要確認/})).toHaveAttribute('aria-pressed','true');
+ if(scenario === 'send-pending') await expect(page.getByRole('button', {name:/^送る候補/})).toHaveAttribute('aria-pressed','true');
+ else await expect(page.getByRole('heading', {name:/^送信できたか確認が必要な写真/})).toBeVisible();
  await expect(page.locator('.photo-card')).toHaveCount(1);
 });
 test('unlimited people setting can be saved', async ({page}) => {
@@ -166,7 +191,7 @@ test('schedule times reject duplicates without sending invalid settings', async 
  const sync = page.locator('[data-time-list="sync"] input');
  await expect(page.locator('[data-add-time="sync"]')).toBeDisabled();
  await sync.first().fill('18:00'); await sync.nth(1).fill('18:00');
- await expect(page.locator('#settings-save-state')).toContainText('同じ時刻が重複');
+ await expect(page.locator('#settings-save-state')).toContainText('同じ時刻が2つあります');
  const last = await page.evaluate(() => (window as unknown as {lastAction?:{settings?:{syncTimes:string[]}}}).lastAction?.settings?.syncTimes);
  expect(!last || new Set(last).size === last.length).toBe(true);
 });
@@ -190,13 +215,13 @@ test('historical retry validates range and sends explicit date bounds', async ({
 test('turning off sharing keeps the active candidate tab and photos consistent', async ({page}) => {
  await page.goto('/');
  await page.getByRole('button', {name:'写真',exact:true}).click();
- await page.getByRole('button', {name:/^未送信/}).click();
+ await page.getByRole('button', {name:/^送る候補/}).click();
  await page.getByRole('button', {name:'設定',exact:true}).click();
  await page.getByLabel('みてねへの送信を使う').uncheck();
  await expect(page.getByRole('radio', {name:/確認してから送る/})).toBeHidden();
  await expect(page.locator('#settings-save-state')).toHaveText('設定は保存済みです');
  await page.getByRole('button', {name:'写真',exact:true}).click();
- await expect(page.getByRole('button', {name:'アルバムにまとめる写真（3枚）',exact:true})).toHaveAttribute('aria-pressed','true');
+ await expect(page.getByRole('button', {name:'まとめる写真（3枚）',exact:true})).toHaveAttribute('aria-pressed','true');
  await expect(page.locator('.photo-card')).toHaveCount(3);
 });
 test('storage-only mode uses the new name and keeps all photos inspectable', async ({page}, testInfo) => {

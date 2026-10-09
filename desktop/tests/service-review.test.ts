@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Service, type Connections, type Vault } from '../src/main/service';
+import { Service, dayNow, type Connections, type Vault } from '../src/main/service';
 import { Store } from '../src/main/store';
 import type { ArchivePhoto, Settings, SyncResult } from '../src/shared/types';
 import type { Session } from '../src/main/connectors';
@@ -16,7 +16,8 @@ async function fixture(overrides: Partial<Settings> = {}) {
   const files: ArchivePhoto[] = [];
   for (const id of ['first.jpeg', 'second.jpeg', 'third.jpeg']) {
     const path = join(archive, id); await writeFile(path, 'synthetic image fixture');
-    files.push({ id, filename: id, path, date: '2026-01-01', title: '合成試験', postId: 'synthetic' });
+    // 今日届いた写真にする。自動送信は、オンにした日（今日）から後に届いた写真だけを送るため。
+    files.push({ id, filename: id, path, date: dayNow(), title: '合成試験', postId: 'synthetic' });
   }
   store.ingest(files, []);
   const messages: string[] = [], uploads: string[][] = [];
@@ -34,6 +35,20 @@ async function fixture(overrides: Partial<Settings> = {}) {
   return { root, archive, store, files, service, connections, vault, uploads, messages, close: async () => { store.close(); await rm(root, { recursive: true, force: true }); } };
 }
 
+test('automatic sending skips photos that arrived before it was turned on, but they can still be sent by hand', async () => {
+  const f = await fixture({ people: [{ name: '対象', album: '' }], sendMode: 'review' });
+  try {
+    f.store.saveSettings({ ...f.store.settings(), sendMode: 'automatic' }, '2099-01-01');
+    f.store.saveSettings({ ...f.store.settings(), syncTimes: ['18:00'] }, '2099-02-01');
+    assert.equal(f.store.settings().autoSendFrom, '2099-01-01');
+    await f.service.analyze();
+    assert.equal(f.uploads.length, 0);
+    await f.service.send(['first.jpeg']);
+    assert.deepEqual(f.uploads, [['first.jpeg']]);
+    f.store.saveSettings({ ...f.store.settings(), sendMode: 'review' });
+    assert.equal(f.store.settings().autoSendFrom, '');
+  } finally { await f.close(); }
+});
 test('review mode never sends during sync; automatic mode sends selected only and preserves exclude', async () => {
   const f = await fixture({ people: [{ name: '対象', album: '' }], sendMode: 'review' });
   try {

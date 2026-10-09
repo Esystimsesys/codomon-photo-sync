@@ -21,9 +21,15 @@ export interface Settings {
   faceMainRatio: number;
   faceMaxPeople: number;
   setupComplete: boolean;
+  /** 自動送信をオンにした日（YYYY-MM-DD）。この日より前にコドモンに届いた写真は自動では送らない。オフなら空。 */
+  autoSendFrom: string;
 }
 export interface Person { name: string; album: string; }
-export interface ArchivePhoto { id: string; filename: string; path: string; date: string; title: string; postId: string; }
+export interface ArchivePhoto {
+  id: string; filename: string; path: string; date: string; title: string; postId: string;
+  /** コドモンで保護者に届いた日（YYYY-MM-DD）。`date` は園が付けた表示日で、さかのぼることがある。分からなければ空。 */
+  postedDate?: string;
+}
 export interface Photo extends ArchivePhoto {
   decision: Decision; autoSelected: boolean; reason: string; uploadState: UploadState;
   imported: boolean; importError: string | null; sentAt: string | null;
@@ -35,7 +41,9 @@ export interface Job { id: number; kind: string; startedAt: string; endedAt: str
 export interface Snapshot {
   settings: Settings; photos: Photo[]; posts: ArchivePost[]; jobs: Job[];
   busy: boolean; progress: string; codmonConnected: boolean; miteneConnected: boolean;
-  platform: string; demo: boolean; validation?: boolean; update: { version: string; url: string } | null;
+  platform: string; demo: boolean;
+  /** このアプリのバージョン（package.json の version）。 */
+  version: string; validation?: boolean; update: { version: string; url: string } | null;
 }
 export type Action =
   | { type: 'settings'; settings: Settings }

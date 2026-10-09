@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import piexif from 'piexifjs';
-import { normalizeDate, monthlyIntervals, entryDate, timelinePhotos, recordBody, photoFilename, codmonUrl, stampExif, atomicWrite, fetchTimeline, readFaceResults, judgeFace, confirmedUploadCount, appleScriptString, syncCodmonRequest } from '../src/main/connectors';
+import { normalizeDate, monthlyIntervals, entryDate, postedDate, timelinePhotos, recordBody, photoFilename, codmonUrl, stampExif, atomicWrite, fetchTimeline, readFaceResults, judgeFace, confirmedUploadCount, appleScriptString, syncCodmonRequest } from '../src/main/connectors';
 import type { Settings } from '../src/shared/types';
 const settings = { album:'園',people:[{name:'対象',album:''}],faceMinPx:25,faceMinRatio:0.6,faceMainRatio:0.8,faceMaxPeople:5 } as unknown as Settings;
 
@@ -14,6 +14,10 @@ test('calendar intervals are contiguous inclusive months and reject impossible d
   assert.equal(normalizeDate('2026-02-30'), null);
   assert.equal(entryDate({ display_date:'不明',insert_datetime:'2026-08-04 12:33:00' }), '2026-08-04');
   assert.equal(entryDate({}), 'unknown-date');
+  // 届いた日は、園が付けた表示日ではなく配信開始（なければ投稿）の日時から取る。
+  assert.equal(postedDate({ display_date:'2026-10-08', delivery_start_datetime:'2026-10-10 09:00:00', insert_datetime:'2026-10-09 18:00:00' }), '2026-10-10');
+  assert.equal(postedDate({ display_date:'2026-10-08', insert_datetime:'2026-10-09 18:00:00' }), '2026-10-09');
+  assert.equal(postedDate({ display_date:'2026-10-08' }), '');
   assert.deepEqual(monthlyIntervals('2024-02-28','2024-04-01'), [['2024-02-28','2024-02-29'],['2024-03-01','2024-03-31'],['2024-04-01','2024-04-01']]);
   assert.throws(() => monthlyIntervals('2024-04-01','2024-03-01'));
 });
@@ -125,7 +129,7 @@ test('archive preserves old records during failed month/service, all kinds, unda
     assert.equal(initial.posts.find(p=>p.kind==='bills')?.body,'請求 0');
     assert.ok(initial.errors.some(e=>e.includes('形式')));
     assert.ok(initial.errors.some(e=>e.includes('添付')));
-    assert.ok(initial.errors.some(e=>e.includes('日付不明')));
+    assert.ok(initial.errors.some(e=>e.includes('日付が分からない')));
     assert.ok(!calls.some(u=>u.includes('SALE')));
     const january = initial.posts.find(p=>p.kind==='activities')!;
     const original = await readFile(january.path,'utf8');
@@ -193,7 +197,7 @@ test('upload batches persist sending before click and success before next naviga
   } as any;
   const photos = Array.from({length:21},(_,i)=>({id:String(i),path:`/synthetic/${i}.jpeg`})) as any;
   const callbacks = {beforeSend:(ids:string[])=>{events.push(`sending:${ids.length}`);},onSent:(ids:string[])=>{events.push(`sent:${ids.length}`);}};
-  await assert.rejects(uploadMitenePage(page,{...settings,miteneScope:'家族みんなに公開'},photos,callbacks),/送信結果を確認/);
+  await assert.rejects(uploadMitenePage(page,{...settings,miteneScope:'家族みんなに公開'},photos,callbacks),/送信できたか確認できません/);
   assert.equal(gotoCount,2);
   assert.deepEqual(events,['navigate','files','sending:20','click','sent:20','navigate','files','sending:1','click']);
   events.length = 0; count = 1;
@@ -318,7 +322,7 @@ function albumFixture(options: { incomplete?: boolean; renameFailure?: boolean; 
 test('person album incomplete staging never renames or deletes original album', async () => {
   const {updatePersonAlbumWith} = await import('../src/main/connectors');
   const f = albumFixture({incomplete:true});
-  await assert.rejects(updatePersonAlbumWith(f.config,f.config.person,f.photos,f.adapter),/既存アルバムを保持/);
+  await assert.rejects(updatePersonAlbumWith(f.config,f.config.person,f.photos,f.adapter),/今のアルバムはそのまま残し/);
   assert.deepEqual([...f.albums.get(f.target)!],['first.jpeg']);
   assert.ok(!f.commands.some(c=>c.includes('set name of album')||c.includes('delete album')));
   assert.ok([...f.albums.keys()].some(name=>name.includes('更新中')));
@@ -335,7 +339,7 @@ test('person album rename failure restores original name and never deletes backu
 test('person album final mismatch preserves old backup and source assets', async () => {
   const {updatePersonAlbumWith} = await import('../src/main/connectors');
   const f = albumFixture({finalMismatch:true});
-  await assert.rejects(updatePersonAlbumWith(f.config,f.config.person,f.photos,f.adapter),/更新後の確認/);
+  await assert.rejects(updatePersonAlbumWith(f.config,f.config.person,f.photos,f.adapter),/更新したあとの確認/);
   const backup = [...f.albums.entries()].find(([name])=>name.includes('更新前'))!;
   assert.deepEqual([...backup[1]],['first.jpeg']);
   assert.ok(!f.commands.some(c=>c.includes('delete album')));
