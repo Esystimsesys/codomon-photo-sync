@@ -7,6 +7,44 @@ import { Store, archivePathAllowed, defaults, chosen, validateSettings } from '.
 import type { ArchivePhoto } from '../src/shared/types';
 import { Service, dayNow, type Connections } from '../src/main/service';
 
+test('the start date of automatic sending is decided by the store, not by the screen', () => {
+  const store = new Store(':memory:');
+  const base = { ...store.settings(), saveRoot: '/fixture/archive' };
+  store.saveSettings({ ...base, miteneEnabled: true, sendMode: 'automatic', autoSendFrom: '2000-01-01' }, '2099-01-01');
+  assert.equal(store.settings().autoSendFrom, '2099-01-01');
+  store.saveSettings({ ...store.settings(), autoSendFrom: '2000-01-01' }, '2099-02-01');
+  assert.equal(store.settings().autoSendFrom, '2099-01-01', 'saving while on keeps the original day');
+  store.saveSettings({ ...store.settings(), miteneEnabled: false }, '2099-03-01');
+  assert.equal(store.settings().autoSendFrom, '');
+  store.saveSettings({ ...store.settings(), miteneEnabled: true }, '2099-04-01');
+  assert.equal(store.settings().autoSendFrom, '2099-04-01', 'turning みてね back on starts from that day');
+  store.close();
+});
+test('photos keep the day they reached parents, and older databases gain the column', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'codomon-store-review-'));
+  try {
+    const path = join(root, 'state.sqlite');
+    const old = new Store(path);
+    old.db.exec('ALTER TABLE photos DROP COLUMN postedDate'); old.close();
+    const store = new Store(path);
+    store.ingest([{ ...photo('a'), postedDate: '2026-10-10' }], []);
+    store.ingest([photo('a')], []);
+    assert.equal(store.photo('a')?.postedDate, '2026-10-10', 'a later fetch without the day keeps it');
+    store.close();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+test('older automatic settings start automatic sending from the day this version opens', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'codomon-store-review-'));
+  try {
+    const path = join(root, 'state.sqlite');
+    const old = new Store(path);
+    const { autoSendFrom: _, ...previous } = { ...old.settings(), miteneEnabled: true, sendMode: 'automatic' as const };
+    old.set('settings', previous); old.close();
+    const store = new Store(path);
+    assert.equal(store.settings().autoSendFrom, dayNow());
+    store.close();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 function photo(id: string, filename = `${id}.jpeg`): ArchivePhoto {
   return { id, filename, path: `/fixture/2026-09-01/${filename}`, date: '2026-09-01', title: 'fixture', postId: 'fixture:post' };
 }

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { ArchivePhoto, Person, Photo, Settings, Snapshot, SyncResult, FaceResult } from '../shared/types';
 import { Store, archivePathAllowed, validDay, chosen } from './store';
 import type { Session, ConnectorOptions } from './connectors';
+import { beforeAutoSend } from '../shared/send';
 export interface Vault { has(provider:string): boolean; get(provider:string): Session; put(provider:string,value:Session):void; }
 export interface Connections {
   manualLogin(provider:'codmon'|'mitene',options:ConnectorOptions):Promise<Session>;
@@ -25,8 +26,8 @@ export function dayNow(now=new Date()):string { return `${now.getFullYear()}-${S
 export function safeError(e:unknown):string { return (e instanceof Error?e.message:'処理に失敗しました').replace(/https?:\/\/[^\s)）]+/g,'[接続先]').slice(0,1000); }
 export class Service {
   busy=false; progress=''; update:Snapshot['update']=null;
-  constructor(readonly store:Store,readonly vault:Vault,readonly connectors:Connections,readonly options:{executablePath?:string;changed:()=>void;notify:(message:string)=>void;demo?:boolean;validation?:boolean}){}
-  snapshot():Snapshot { return {settings:this.store.settings(),photos:this.store.photos(),posts:this.store.posts(),jobs:this.store.jobs(),busy:this.busy,progress:this.progress,codmonConnected:this.vault.has('codmon')&&!this.store.get('codmonNeedsLogin'),miteneConnected:this.vault.has('mitene')&&!this.store.get('miteneNeedsLogin'),platform:process.platform,demo:!!this.options.demo,validation:!!this.options.validation,update:this.update}; }
+  constructor(readonly store:Store,readonly vault:Vault,readonly connectors:Connections,readonly options:{version?:string;executablePath?:string;changed:()=>void;notify:(message:string)=>void;demo?:boolean;validation?:boolean}){}
+  snapshot():Snapshot { return {settings:this.store.settings(),photos:this.store.photos(),posts:this.store.posts(),jobs:this.store.jobs(),busy:this.busy,progress:this.progress,codmonConnected:this.vault.has('codmon')&&!this.store.get('codmonNeedsLogin'),miteneConnected:this.vault.has('mitene')&&!this.store.get('miteneNeedsLogin'),platform:process.platform,version:this.options.version??'',demo:!!this.options.demo,validation:!!this.options.validation,update:this.update}; }
   changed():void{this.options.changed();}
   setProgress=(message:string)=>{this.progress=message;this.changed();};
   session(provider:string):Session{try{return this.vault.get(provider);}catch(e){this.store.set(provider+'NeedsLogin',true);throw e;}}
@@ -43,6 +44,8 @@ export class Service {
   syncQuota(now=new Date()): {date:string; count:number} {
     const date=dayNow(now), saved=this.store.get<{date:string;count:number}>('codmonDailyQuota');
     if(saved?.date===date)return saved;
+    // 記録が始まってからは、日付が変われば0回から。履歴から数え直すのは、上限のない版から上げた最初の1回だけ。
+    if(saved){const quota={date,count:0};this.store.set('codmonDailyQuota',quota);return quota;}
     const rows=this.store.db.prepare("SELECT startedAt FROM jobs WHERE kind='写真・記録を取得'").all();
     const count=rows.filter(row=>dayNow(new Date(String(row.startedAt)))===date).length;
     const quota={date,count};this.store.set('codmonDailyQuota',quota);return quota;
@@ -51,7 +54,7 @@ export class Service {
     if(this.busy)throw new Error('ほかの処理を実行中です。終わってからもう一度お試しください');
     // Initialize before startJob so the current attempt is not counted twice.
     const quota=this.syncQuota(now);
-    if(quota.count>=2)throw new Error('コドモンの取り込みは1日2回までです。今日は上限に達しました。明日もう一度お試しください。');
+    if(quota.count>=2)throw new Error('コドモンからの取り込みは1日2回までです。今日はもう取り込めません。明日もう一度お試しください。');
     await this.exclusive('写真・記録を取得',async()=>{
       const settings=this.store.settings();
       const end=endDate||dayNow(now);
@@ -93,14 +96,14 @@ export class Service {
     const sent=after.filter(p=>p.uploadState==='sent'&&!sentBefore.has(p.id)).length;
     const summary=!s.people.length ? '顔認識を使う子どもは設定されていません。' : added||removed
       ? `写真の選択を更新しました（追加${added}枚・解除${removed}枚）。`
-      : '顔認識の結果を確認しました（選択する写真に変更はありません）。';
+      : '顔認識を更新しました（選択中の写真に変更はありません）。';
     this.setProgress(summary+(sent ? ` みてねに${sent}枚送信しました。` : ''));
   });}
   async analyzeInternal():Promise<string[]>{
     const s=this.store.settings();const errors:string[]=[];
     if(s.importPhotos){
       const pending=this.store.photos().filter(p=>!p.imported);
-      if(pending.length){this.setProgress('Macの「写真」アプリに取り込んでいます');const result=await this.connectors.importIntoPhotos(s,pending);this.store.markImported(result.imported,result.errors);if(Object.keys(result.errors).length)errors.push(`${Object.keys(result.errors).length}枚のMacの「写真」アプリ取り込みを確認できませんでした`);}
+      if(pending.length){this.setProgress('Macの「写真」アプリに取り込んでいます');const result=await this.connectors.importIntoPhotos(s,pending);this.store.markImported(result.imported,result.errors);if(Object.keys(result.errors).length)errors.push(`${Object.keys(result.errors).length}枚は、「写真」アプリに取り込めたか確認できませんでした`);}
     }
     if(s.people.length){this.setProgress('Macの「写真」アプリの顔認識の結果を読み込んでいます');const faces=await this.connectors.analyzePhotos(s);this.store.applyFaces(faces);
       if(s.importPhotos&&this.connectors.updatePersonAlbum){const photos=this.store.photos().filter(p=>p.imported);for(const person of s.people){try{await this.connectors.updatePersonAlbum(s,person,personPhotos(photos,faces,person,s.people.length));}catch(e){errors.push(s.people.length>1?`${person.name}のアルバム：${safeError(e)}`:safeError(e));}}}
@@ -112,13 +115,14 @@ export class Service {
   }
   async send(ids:string[]):Promise<void>{await this.exclusive('みてねへ送信',async()=>{await this.sendInternal(ids);});}
   async sendInternal(ids?:string[]):Promise<void>{
-    const settings=this.store.settings();if(!settings.miteneEnabled)throw new Error('設定でみてね連携を有効にしてください');
-    if(ids){for(const id of ids){const p=this.store.photo(id);if(!p||p.uploadState!=='pending')throw new Error('未送信の写真だけを選んでください');}this.store.decide(ids,'include');}
-    const candidates=this.store.eligible(ids);
+    const settings=this.store.settings();if(!settings.miteneEnabled)throw new Error('設定で「みてねへの送信を使う」をオンにしてください');
+    if(ids){for(const id of ids){const p=this.store.photo(id);if(!p||p.uploadState!=='pending')throw new Error('未送信の写真だけにチェックしてください');}this.store.decide(ids,'include');}
+    // 自動送信（ids なし）では、自動送信をオンにした日より前に届いた写真は送らない。
+    const candidates=this.store.eligible(ids).filter(p=>ids||!beforeAutoSend(p,settings));
     // A filename is the ledger identity. Never submit two rows with the same filename in one batch.
     const photos=[...new Map(candidates.map(p=>[p.filename,p])).values()];
-    if(!photos.length){this.setProgress('みてねに送る未送信の写真はありません');return;}
-    for(const p of photos)if(!await archivePathAllowed(p.path,settings.saveRoot))throw new Error('送信する写真が保存先に見つかりません。再取得してください');
+    if(!photos.length){this.setProgress('みてねに送る写真はありません');return;}
+    for(const p of photos)if(!await archivePathAllowed(p.path,settings.saveRoot))throw new Error('送る写真が保存先に見つかりません。「コドモンから期間を指定して取り込む」で取り込み直してください');
     await this.connectors.uploadMitene(settings,this.session('mitene'),photos,{beforeSend:ids=>{this.store.markSending(ids);this.changed();},onSent:ids=>{this.store.markSent(ids);this.changed();}},this.connectorOptions('mitene'));
     this.setProgress(`${photos.length}枚をみてねへ送信しました`);
   }

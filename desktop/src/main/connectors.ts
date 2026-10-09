@@ -28,6 +28,10 @@ export function normalizeDate(value: unknown): string | null {
   const d = new Date(`${day}T12:00:00Z`);
   return Number.isFinite(d.getTime()) && d.toISOString().slice(0, 10) === day ? day : null;
 }
+/** 保護者に届いた日。配信開始の日時、なければ投稿の日時。自動送信の対象かどうかの判定に使う。 */
+export function postedDate(item: Item): string {
+  return normalizeDate(item.delivery_start_datetime) || normalizeDate(item.insert_datetime) || '';
+}
 export function entryDate(item: Item): string {
   return normalizeDate(item.display_date) || normalizeDate(item.insert_datetime) || normalizeDate(item.open_datetime) || 'unknown-date';
 }
@@ -127,7 +131,7 @@ export async function manualLogin(provider: 'codmon' | 'mitene', options: Connec
       if (authenticated) { const session = await context.storageState(); await options.onSession?.(session); return session; }
       await page.waitForTimeout(2500);
     }
-    throw new Error('ログインの確認が時間切れになりました。再ログインしてください');
+    throw new Error('ログインを確認できないまま時間切れになりました。もう一度ログインしてください');
   } finally { await browser.close(); }
 }
 export async function fetchTimeline(request: Pick<BrowserContext['request'], 'get'>, serviceId: string, start: string, end: string): Promise<Item[]> {
@@ -140,9 +144,9 @@ export async function fetchTimeline(request: Pick<BrowserContext['request'], 'ge
     if (!Array.isArray(data.data)) throw new Error('記録の応答形式が変わっています');
     items.push(...data.data);
     if (!data.next_page) return items;
-    if (!data.data.length) throw new Error('記録のページ取得が進みませんでした');
+    if (!data.data.length) throw new Error('記録の取得が途中で進まなくなりました');
   }
-  throw new Error('記録のページ上限に達しました。取得期間を短くしてください');
+  throw new Error('記録が多すぎて一度に取得できません。期間を短くして取り込んでください');
 }
 export async function syncCodmon(settings: Settings, session: Session, startDate: string, endDate: string, options: ConnectorOptions = {}): Promise<SyncResult> {
   monthlyIntervals(startDate, endDate);
@@ -158,9 +162,9 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
   const result: SyncResult = { photos: [], posts: [], errors: [] };
     if ((await request.get(`${API}/my/`)).status() !== 200) throw new Error('コドモンに再ログインしてください');
     const servicesResponse = await request.get(`${API}/services/?__env__=myapp&use_image_edge=true`);
-    if (servicesResponse.status() !== 200) throw new Error('施設一覧を取得できません');
+    if (servicesResponse.status() !== 200) throw new Error('コドモンの施設情報を取得できません');
     const services = (await servicesResponse.json()).data;
-    if (!services || typeof services !== 'object' || Array.isArray(services) || !Object.keys(services).length) throw new Error('利用可能な施設を確認できません');
+    if (!services || typeof services !== 'object' || Array.isArray(services) || !Object.keys(services).length) throw new Error('利用できる施設が見つかりません');
     const children = await childNames(request);
     const seen = new Set<string>();
     const photoSources = new Map<string, string>();
@@ -202,8 +206,8 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
             if (collision) { result.errors.push(`${date}: 同じファイル名の異なる写真を別フォルダに保存しました（${filename}）。確認が必要です`); continue; }
             if (previous === undefined) await atomicWrite(sourceFile, JSON.stringify({ filename, pathname: canonical }));
             photoSources.set(filename, canonical);
-            if (date === 'unknown-date') result.errors.push('日付不明の写真を保存しました。Macの「写真」アプリへの取り込みは日付の確認後に行ってください');
-            if (!result.photos.some(p => p.id === filename)) result.photos.push({ id: filename, filename, path: dest, date, title, postId: id });
+            if (date === 'unknown-date') result.errors.push('日付が分からない写真を保存しました。この写真の「写真」アプリへの取り込みは保留しています');
+            if (!result.photos.some(p => p.id === filename)) result.photos.push({ id: filename, filename, path: dest, date, title, postId: id, postedDate: postedDate(item) });
           } catch (e) { result.errors.push(`${date} 写真: ${errorText(e)}`); }
         }
         if (typeof item.file_url === 'string' && item.file_url) {
@@ -269,13 +273,13 @@ export async function importIntoPhotos(settings: Settings, photos: ArchivePhoto[
   if (process.platform !== 'darwin') throw new Error('Macの「写真」アプリへの取り込みはMacのみ対応しています');
   const imported: string[] = [], errors: Record<string, string> = {};
   const have = await albumFilenames(settings.album);
-  const todo = photos.filter(p => { if (p.date === 'unknown-date') { errors[p.id] = '撮影日を確認できないため取り込みを保留しています'; return false; } if (have.has(p.filename)) { imported.push(p.id); return false; } return true; });
+  const todo = photos.filter(p => { if (p.date === 'unknown-date') { errors[p.id] = '日付が分からないため、取り込みを保留しています'; return false; } if (have.has(p.filename)) { imported.push(p.id); return false; } return true; });
   for (let i = 0; i < todo.length; i += 100) {
     const chunk = todo.slice(i, i + 100);
     try {
       await exec('/usr/bin/osascript', ['-e', `on run argv\nset fileList to {}\nrepeat with p in argv\nset end of fileList to (POSIX file (contents of p)) as alias\nend repeat\nwith timeout of 1800 seconds\ntell application "Photos"\nif not (exists album ${appleScriptString(settings.album)}) then make new album named ${appleScriptString(settings.album)}\nimport fileList into album ${appleScriptString(settings.album)} skip check duplicates false\nend tell\nend timeout\nend run`, ...chunk.map(p => p.path)], { timeout: 1_810_000 });
       const after = await albumFilenames(settings.album);
-      for (const p of chunk) if (after.has(p.filename)) imported.push(p.id); else errors[p.id] = '取り込みを確認できません（内容重複の可能性）。Macの「写真」アプリを確認してください';
+      for (const p of chunk) if (after.has(p.filename)) imported.push(p.id); else errors[p.id] = '取り込めたか確認できません。同じ写真がすでに「写真」アプリにある可能性があります';
     } catch { for (const p of chunk) errors[p.id] = 'Macの「写真」アプリへの取り込みに失敗しました。オートメーション権限を確認してください'; }
   }
   return { imported, errors };
@@ -298,7 +302,7 @@ export function readFaceResults(db: DatabaseSync, settings: Settings): FaceResul
     const album = cols.find(c => c.endsWith('ALBUMS')), asset = cols.find(c => c.endsWith('ASSETS') && !c.startsWith('Z_FOK_'));
     if (album && asset) { join = { table, album, asset }; break; }
   }
-  if (!join) throw new Error('この写真ライブラリの形式には対応していません。候補は手動で選んでください');
+  if (!join) throw new Error('この写真ライブラリの形式には対応していません。写真は手動で選択してください');
   const rows = db.prepare(`SELECT f.ZASSETFORFACE asset, aa.ZORIGINALFILENAME name, p.ZFULLNAME person, f.ZSIZE size, f.ZSOURCEWIDTH width FROM ZDETECTEDFACE f JOIN ${identifier(join.table)} a ON a.${identifier(join.asset)}=f.ZASSETFORFACE JOIN ZADDITIONALASSETATTRIBUTES aa ON aa.ZASSET=f.ZASSETFORFACE LEFT JOIN ZPERSON p ON p.Z_PK=f.ZPERSONFORFACE WHERE a.${identifier(join.album)}=?`).all(pk);
   const groups = new Map<string, typeof rows>();
   for (const r of rows) { const key = String(r.asset); groups.set(key, [...(groups.get(key) || []), r]); }
@@ -346,12 +350,12 @@ export async function uploadMitenePage(page: Page, settings: Settings, photos: A
       if (/\/web\/(login|otp)/.test(page.url())) throw new Error('みてねに再ログインしてください');
       const input = page.locator('input[type=file]');
       await input.waitFor({ state: 'attached', timeout: 30_000 });
-      if (await input.count() !== 1) throw new Error('みてねの写真選択画面が変わっています');
+      if (await input.count() !== 1) throw new Error('みてねの画面が変わったため、送信できません');
       if (confirmedUploadCount(await page.innerText('body')) !== null) throw new Error('前回の完了表示が残っています。送信を中止しました');
       await input.setInputFiles(chunk.map(p => p.path));
       const button = page.getByRole('button', { name: settings.miteneScope, exact: true });
       await button.waitFor({ state: 'visible', timeout: 30_000 });
-      if (await button.count() !== 1) throw new Error('公開範囲を一意に確認できません。送信を中止しました');
+      if (await button.count() !== 1) throw new Error('公開範囲のボタンを見つけられないため、送信を中止しました');
       await callbacks.beforeSend(chunk.map(p => p.id));
       // From this point an exception is ambiguous, including a click timeout. Never retry automatically.
       try {
@@ -361,7 +365,7 @@ export async function uploadMitenePage(page: Page, settings: Settings, photos: A
           return match !== null && Number(match[1]) === count;
         }, chunk.length, { timeout: 180_000 });
         await callbacks.onSent(chunk.map(p => p.id));
-      } catch { throw new Error('送信結果を確認できません。みてねを確認し、送信済みか再試行かを選んでください'); }
+      } catch { throw new Error('送信できたか確認できませんでした。みてねで届いているかを確かめて、写真画面で結果を選んでください'); }
       options.onProgress?.(`${Math.min(i + 20, photos.length)} / ${photos.length} 枚を送信しました`);
     }
 }
@@ -381,15 +385,15 @@ export async function updatePersonAlbum(settings: Settings, person: Person, sele
 export async function updatePersonAlbumWith(settings: Pick<Settings, 'album'>, person: Person, selected: ArchivePhoto[], adapter: AlbumAdapter): Promise<void> {
   const { run, albumFiles } = adapter;
   const target = personAlbum(settings.album, person);
-  if (target === settings.album) throw new Error('人物アルバムと取り込み先には異なる名前を指定してください');
+  if (target === settings.album) throw new Error('子どものアルバムには、取り込み先のアルバムと違う名前を付けてください');
   const { stdout: counts } = await run(`return ((count of (every album whose name is ${appleScriptString(settings.album)})) as text) & "," & ((count of (every album whose name is ${appleScriptString(target)})) as text)`);
   const [sourceCount, targetCount] = counts.trim().split(',').map(Number);
-  if (sourceCount !== 1 || targetCount > 1 || !Number.isFinite(targetCount)) throw new Error('同名のアルバムが複数あるか、取り込み先がありません。アルバム名を確認してください');
+  if (sourceCount !== 1 || targetCount > 1 || !Number.isFinite(targetCount)) throw new Error('同じ名前のアルバムが複数あるか、取り込み先のアルバムがありません。「写真」アプリのアルバム名を確認してください');
   const wanted = new Set(selected.map(p => p.filename));
   const before = await albumFiles(target);
   if (wanted.size === before.size && [...wanted].every(name => before.has(name))) return;
   const source = await albumFiles(settings.album);
-  if ([...wanted].some(name => !source.has(name))) throw new Error('人物アルバムに必要な写真が取り込み先にありません。既存アルバムは保持しました');
+  if ([...wanted].some(name => !source.has(name))) throw new Error('子どものアルバムに入れる写真が、取り込み先のアルバムにありません。今のアルバムはそのまま残しました');
   const token = randomUUID().slice(0, 8), staging = `${target}（更新中 ${token}）`, backup = `${target}（更新前 ${token}）`;
 
   await run(`make new album named ${appleScriptString(staging)}`);
@@ -401,7 +405,7 @@ export async function updatePersonAlbumWith(settings: Pick<Settings, 'album'>, p
   const actual = await albumFiles(staging);
   const { stdout } = await run(`return (count of media items of album ${appleScriptString(staging)}) as text`);
   if (Number(stdout.trim()) !== names.length || actual.size !== wanted.size || names.some(name => !actual.has(name))) {
-    throw new Error(`人物アルバムの内容を確認できません。既存アルバムを保持し、${staging} を残しました`);
+    throw new Error(`子どものアルバムの中身を確認できません。今のアルバムはそのまま残し、作業用の「${staging}」も残しました`);
   }
   // Rename the old album first, preserving rollback until the new name is confirmed.
   await run(`if (exists album ${appleScriptString(target)}) then set name of album ${appleScriptString(target)} to ${appleScriptString(backup)}`);
@@ -411,7 +415,7 @@ export async function updatePersonAlbumWith(settings: Pick<Settings, 'album'>, p
     throw error;
   }
   const final = await albumFiles(target);
-  if (final.size !== wanted.size || names.some(name => !final.has(name))) throw new Error(`人物アルバム更新後の確認に失敗しました。${backup} を保持しました`);
+  if (final.size !== wanted.size || names.some(name => !final.has(name))) throw new Error(`子どものアルバムを更新したあとの確認に失敗しました。更新前の「${backup}」を残しました`);
   await run(`if (exists album ${appleScriptString(backup)}) then delete album ${appleScriptString(backup)}`);
 }
 

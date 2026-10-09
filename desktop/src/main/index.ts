@@ -78,7 +78,7 @@ function idsFrom(value:unknown):string[]{if(!Array.isArray(value)||value.length>
 async function confirm(message:string,detail:string,button='実行する'):Promise<boolean>{const result=await dialog.showMessageBox({type:'question',message,detail,buttons:['キャンセル',button],defaultId:0,cancelId:0});return result.response===1;}
 async function saveSettings(input:unknown):Promise<void>{
   const next=validateSettings(input),before=store.settings();
-  if(store.photos().length&&next.saveRoot!==before.saveRoot)throw new Error('取り込み済みの写真があります。保存先を移す場合は、このツールを終了してからバックアップを取って行ってください');
+  if(store.photos().length&&next.saveRoot!==before.saveRoot)throw new Error('取り込み済みの写真があるため、保存先は変更できません');
   if(!demo&&!test&&next.launchAtLogin!==before.launchAtLogin){if(!app.isPackaged&&next.launchAtLogin)throw new Error('ログイン時の起動は、アプリケーションフォルダに配置した配布版で設定してください');app.setLoginItemSettings({openAtLogin:next.launchAtLogin});}
   if(JSON.stringify(next.people.map(p=>p.name))!==JSON.stringify(before.people.map(p=>p.name))||next.album!==before.album||next.photosLibrary!==before.photosLibrary)store.applyFaces([]);
   store.saveSettings(next);changed();
@@ -99,7 +99,7 @@ async function action(raw:unknown):Promise<unknown>{
     case 'send':await service.send(idsFrom(a.ids));break;
     case 'seed':{
       const ids=idsFrom(a.ids),photos=ids.map(id=>store.photo(id));
-      if(photos.some(p=>!p||p.uploadState!=='pending'))throw new Error('未送信の写真だけを指定してください');
+      if(photos.some(p=>!p||p.uploadState!=='pending'))throw new Error('未送信の写真だけにチェックしてください');
       store.transaction(()=>store.seedFilenames(photos.map(p=>p!.filename),'skipped'));break;
     }
     case 'resolve':if(!['sent','retry','skipped'].includes(a.resolution))throw new Error('結果の指定が正しくありません');store.resolve(idsFrom(a.ids),a.resolution);break;
@@ -124,7 +124,7 @@ async function ready():Promise<void>{
   const data=app.getPath('userData');mkdirSync(data,{recursive:true,mode:0o700});chmodSync(data,0o700);
   store=new Store(join(data,'archive.sqlite'));
   const vault=new SessionVault(join(data,'sessions'));
-  service=new Service(store,vault,connectors,{executablePath:browserExecutable(),changed,notify,demo,validation:test&&!demo});
+  service=new Service(store,vault,connectors,{version:app.getVersion(),executablePath:browserExecutable(),changed,notify,demo,validation:test&&!demo});
   if(demo)await seedDemo();
   session.defaultSession.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));
   session.defaultSession.setPermissionCheckHandler(()=>false);
