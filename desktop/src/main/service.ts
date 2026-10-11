@@ -22,6 +22,8 @@ export function personPhotos(photos:Photo[],faces:FaceResult[],person:Person,cou
   const mine=faces.filter(f=>f.person===person.name),chosen=new Set(mine.filter(f=>f.selected).map(f=>f.filename)),found=new Set(mine.map(f=>f.filename));
   return photos.filter(p=>p.decision==='include'?count===1||found.has(p.filename):p.decision==='auto'&&chosen.has(p.filename));
 }
+/** Earliest day an automatic backfill may reach. Codmon records do not go back further. */
+export const EARLIEST_DAY='2000-01-01';
 export function dayNow(now=new Date()):string { return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`; }
 export function safeError(e:unknown):string { return (e instanceof Error?e.message:'処理に失敗しました').replace(/https?:\/\/[^\s)）]+/g,'[接続先]').slice(0,1000); }
 export class Service {
@@ -64,15 +66,19 @@ export class Service {
       const overlap = last ? new Date(last) : null;
       if(overlap) overlap.setDate(overlap.getDate()-1);
       const catchup = overlap && Number.isFinite(overlap.getTime()) && dayNow(overlap)<dayNow(recent) ? dayNow(overlap) : dayNow(recent);
-      const requestedStart=startDate || (last?catchup:settings.initialStartDate);
+      // 開始日の指定がない初回は、今月からさかのぼり、記録のない月が1年続いたところで止める。
+      const backfill=!startDate&&!last&&!settings.initialStartDate;
+      const requestedStart=startDate || (last?catchup:settings.initialStartDate||EARLIEST_DAY);
       const start=pending&&pending.start<requestedStart?pending.start:requestedStart;
       const until=pending&&pending.end>end?pending.end:end;
       if(!validDay(start)||!validDay(until)||start>until)throw new Error('取得期間が正しくありません');
       const session=this.session('codmon');
-      this.store.set('pendingSync',{start,end:until});
+      // さかのぼる取り込みは、成功するまで次回もさかのぼる。2000年からを残すと、期間指定の取り込みが全期間に広がる。
+      // 前に失敗した期間は、空の月が続いても打ち切らずに取りにいき、取れるまで残す。
+      if(!backfill)this.store.set('pendingSync',{start,end:until});
       // Reserve before contacting コドモン. Network failures also consume a request; restarts keep the count.
       this.store.set('codmonDailyQuota',{date:quota.date,count:quota.count+1});
-      const result=await this.connectors.syncCodmon(settings,session,start,until,this.connectorOptions('codmon'));
+      const result=await this.connectors.syncCodmon(settings,session,start,until,{...this.connectorOptions('codmon'),...(backfill?{stopAfterEmptyMonths:12,...(pending?{fetchAllFrom:pending.start}:{})}:{})});
       this.store.ingest(result.photos,result.posts);
       if(!result.errors.length){if(!startDate&&!endDate)this.store.set('lastSync',new Date().toISOString());this.store.set('pendingSync',null);}
       const errors=[...result.errors];

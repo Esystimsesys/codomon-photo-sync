@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { Store, archivePathAllowed, defaults, chosen, validateSettings } from '../src/main/store';
 import type { ArchivePhoto } from '../src/shared/types';
 import { Service, dayNow, type Connections } from '../src/main/service';
+import type { ConnectorOptions } from '../src/main/connectors';
 
 test('the start date of automatic sending is decided by the store, not by the screen', () => {
   const store = new Store(':memory:');
@@ -200,6 +201,44 @@ test('historical manual acquisition cannot advance the incremental checkpoint pa
     await service.sync('2025-01-01', '2025-01-31');
     await service.sync();
     assert.ok(ranges[1][0] <= dayNow(last), `manual archive query advanced checkpoint past ${dayNow(last)} to ${ranges[1][0]}`);
+  } finally { store.close(); }
+});
+
+test('first acquisition without a start date walks back from today instead of querying since 2000', async () => {
+  const store = new Store(':memory:');
+  try {
+    const ranges: string[][] = [], service = syncFixture(store, ranges);
+    const options: (number | undefined)[] = [];
+    const record = service.connectors.syncCodmon;
+    service.connectors.syncCodmon = async (settings, session, start, end, o) => { options.push(o.stopAfterEmptyMonths); return record(settings, session, start, end, o); };
+    // 以前の初期値「2000-01-01」は、日付の指定がないものとして読む。
+    store.set('settings', { ...store.settings(), initialStartDate: '2000-01-01' });
+    assert.equal(store.settings().initialStartDate, '');
+    await service.sync();
+    assert.deepEqual([ranges[0][0], options[0]], ['2000-01-01', 12]);
+    // 期間指定と、開始日を決めた初回は、指定どおりに全部の月を取りにいく。
+    await service.sync('2000-01-01', '2000-12-31');
+    assert.equal(options[1], undefined);
+    store.set('codmonDailyQuota', { date: dayNow(), count: 0 });
+    store.saveSettings({ ...store.settings(), initialStartDate: '2024-04-01' });
+    store.set('lastSync', null);
+    await service.sync();
+    assert.deepEqual([ranges[2][0], options[2]], ['2024-04-01', undefined]);
+  } finally { store.close(); }
+});
+
+test('walking back still acquires an older range left over from a failed acquisition', async () => {
+  const store = new Store(':memory:');
+  try {
+    const ranges: string[][] = [], service = syncFixture(store, ranges);
+    const options: ConnectorOptions[] = [];
+    const record = service.connectors.syncCodmon;
+    store.set('pendingSync', { start: '2020-03-01', end: '2020-03-31' });
+    service.connectors.syncCodmon = async (settings, session, start, end, o) => { options.push(o); await record(settings, session, start, end, o); return { photos: [], posts: [], errors: ['2020-03-01 〜 2020-03-31: HTTP 500'] }; };
+    await assert.rejects(service.sync());
+    assert.deepEqual([options[0].stopAfterEmptyMonths, options[0].fetchAllFrom], [12, '2020-03-01']);
+    assert.deepEqual(store.get('pendingSync'), { start: '2020-03-01', end: '2020-03-31' });
+    assert.equal(store.get('lastSync'), undefined);
   } finally { store.close(); }
 });
 

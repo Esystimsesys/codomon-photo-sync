@@ -143,6 +143,31 @@ test('archive preserves old records during failed month/service, all kinds, unda
   } finally { await rm(dir,{recursive:true,force:true}); }
 });
 
+test('walking back stops after a year without records but passes shorter gaps', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(),'codomon-backfill-'));
+  const months: string[] = [];
+  const fake = {get:async(raw: string) => { const u = new URL(raw); let data: any = {};
+    if (u.pathname.endsWith('/services/')) data = {data:{s:{}}};
+    else if (u.pathname.endsWith('/timeline/')) {
+      const month = u.searchParams.get('start_date')!.slice(0,7); months.push(month);
+      // 2025年6月と2026年3月にだけ記録があり、間の8か月は空く。
+      data = {data:['2025-06','2026-03'].includes(month) ? [{id:month,timeline_kind:'activities',display_date:`${month}-10`,overview:'記録'}] : []};
+    }
+    return {dispose:async()=>{},status:()=>200,json:async()=>data,body:async()=>Buffer.alloc(0),headers:()=>({})};
+  }} as any;
+  try {
+    const result = await syncCodmonRequest({...settings,saveRoot:dir},fake,'2000-01-01','2026-10-11',{stopAfterEmptyMonths:12,requestIntervalMs:0});
+    assert.equal(result.posts.length,2);
+    assert.equal(months[0],'2026-10');
+    assert.equal(months.at(-1),'2024-06');
+    assert.equal(months.length,29);
+    // 前に失敗した2020年3月は、空の月が続いても取りにいき、その前の月で止める。
+    months.length = 0;
+    await syncCodmonRequest({...settings,saveRoot:dir},fake,'2000-01-01','2026-10-11',{stopAfterEmptyMonths:12,fetchAllFrom:'2020-03-01',requestIntervalMs:0});
+    assert.equal(months.at(-1),'2020-03');
+  } finally { await rm(dir,{recursive:true,force:true}); }
+});
+
 test('different source paths sharing a basename are preserved separately and flagged for review', async () => {
   const dir = await mkdtemp(path.join(tmpdir(),'codomon-collision-'));
   const jpeg = Buffer.from([0xff,0xd8,0xff,0xda,0,2,0xff,0xd9]);

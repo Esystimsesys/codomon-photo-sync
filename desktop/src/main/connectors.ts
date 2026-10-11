@@ -14,6 +14,12 @@ export interface ConnectorOptions {
   executablePath?: string;
   onProgress?: (message: string) => void;
   onSession?: (session: Session) => Promise<void> | void;
+  /** Walk back from the newest month and stop after this many months in a row without records. */
+  stopAfterEmptyMonths?: number;
+  /** Months ending on or after this day are always fetched, even after a run of empty months. */
+  fetchAllFrom?: string;
+  /** Pause between timeline requests so コドモン is not queried in a burst. */
+  requestIntervalMs?: number;
 }
 type Item = Record<string, any>;
 const API = 'https://ps-api.codmon.com/api/v2/parent';
@@ -176,11 +182,19 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
     const children = await childNames(request);
     const seen = new Set<string>();
     const photoSources = new Map<string, string>();
-    for (const serviceId of Object.keys(services)) for (const [start, end] of ranges) {
+    const stopAfter = options.stopAfterEmptyMonths, interval = options.requestIntervalMs ?? 500;
+    const ordered = stopAfter ? [...ranges].reverse() : ranges;
+    let requested = false;
+    for (const serviceId of Object.keys(services)) { let empty = 0; for (const [start, end] of ordered) {
+      // Records begin at enrollment, so a year without any means the history before it is empty too.
+      if (stopAfter && empty >= stopAfter && (!options.fetchAllFrom || end < options.fetchAllFrom)) break;
+      if (requested && interval) await new Promise(resolve => setTimeout(resolve, interval));
+      requested = true;
       options.onProgress?.(`${start} 〜 ${end} の記録を取得しています`);
       let items: Item[];
       try { items = await fetchTimeline(request, serviceId, start, end); }
       catch (e) { result.errors.push(`${start} 〜 ${end}: ${errorText(e)}`); continue; }
+      empty = items.length ? 0 : empty + 1;
       for (const item of items) {
         if (!item || typeof item !== 'object' || Array.isArray(item)) { result.errors.push(`${start}: 記録の形式が正しくありません`); continue; }
         const id = `${serviceId}:${item.timeline_kind || 'unknown'}:${item.id ?? createHash('sha256').update(JSON.stringify(item)).digest('hex')}`;
@@ -245,7 +259,7 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
           result.posts.push({ id, date, kind, title, body, path: markdown, attachments, ...(author ? { author } : {}), ...(names.length ? { children: names } : {}) });
         } catch (e) { result.errors.push(`${date} 記録保存: ${errorText(e)}`); }
       }
-    }
+    } }
     return result;
 }
 /** member_id → the child's name. Names only label records, so a failure here never stops archiving. */

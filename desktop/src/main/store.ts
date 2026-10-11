@@ -10,7 +10,7 @@ export function defaults(home = homedir()): Settings {
   return { saveRoot: join(home, 'Pictures/codomon'), album: 'コドモン', people: [],
     photosLibrary: join(home, 'Pictures/Photos Library.photoslibrary/database/Photos.sqlite'),
     importPhotos: true, sendMode: 'review', miteneEnabled: false, miteneScope: '家族みんなに公開',
-    autoSync: false, syncTimes: ['17:30','21:00'], faceTimes: ['07:00','13:00','19:00','22:00'], launchAtLogin: false, initialStartDate: '2000-01-01', faceMinPx: 25,
+    autoSync: false, syncTimes: ['17:30','21:00'], faceTimes: ['07:00','13:00','19:00','22:00'], launchAtLogin: false, initialStartDate: '', faceMinPx: 25,
     faceMinRatio: .6, faceMainRatio: .8, faceMaxPeople: 5, setupComplete: false, autoSendFrom: '' };
 }
 export function validDay(value: unknown): value is string {
@@ -36,7 +36,7 @@ export function validateSettings(value: unknown): Settings {
   if (new Set(albums).size !== albums.length || albums.includes(s.album)) throw new Error('子どもごとのアルバムには、取り込み先のアルバムとも、ほかの子のアルバムとも違う名前を付けてください');
   for (const key of ['importPhotos','miteneEnabled','autoSync','launchAtLogin','setupComplete'] as const) if (typeof s[key] !== 'boolean') throw new Error('設定の形式が正しくありません');
   if (!['review','automatic'].includes(s.sendMode) || !['家族みんなに公開','管理者のみ'].includes(s.miteneScope)) throw new Error('送信設定が正しくありません');
-  if (!validDay(s.initialStartDate)) throw new Error('取得開始日が正しくありません');
+  if (s.initialStartDate !== '' && !validDay(s.initialStartDate)) throw new Error('取得開始日が正しくありません');
   const autoSendFrom = s.autoSendFrom ?? '';
   if (autoSendFrom !== '' && !validDay(autoSendFrom)) throw new Error('自動送信の開始日が正しくありません');
   for (const key of ['faceMinPx','faceMinRatio','faceMainRatio','faceMaxPeople'] as const) if (typeof s[key] !== 'number' || !Number.isFinite(s[key]) || s[key] < 0) throw new Error('顔の選別条件が正しくありません');
@@ -82,6 +82,8 @@ export class Store {
   set(key: string, value: unknown): void { this.db.prepare('INSERT INTO meta VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(value)); }
   settings(): Settings {
     const s = { ...defaults(), ...this.get<Settings>('settings') };
+    // 以前の初期値は「全期間」の意味だったので、記録のある期間をさかのぼる今の動きに読み替える。
+    if (s.initialStartDate === '2000-01-01') s.initialStartDate = '';
     return { ...s, syncTimes: validateTimes(s.syncTimes, '同期', 2), faceTimes: validateTimes(s.faceTimes, '顔認識の更新') };
   }
   saveSettings(s: Settings, today = localDay()): void {
