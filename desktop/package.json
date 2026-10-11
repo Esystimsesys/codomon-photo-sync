@@ -60,7 +60,8 @@
     },
     "mac": {
       "category": "public.app-category.photography",
-      "identity": null,
+      "identity": "-",
+      "hardenedRuntime": false,
       "target": [
         "dmg",
         "zip"

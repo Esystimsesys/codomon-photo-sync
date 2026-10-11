@@ -40,6 +40,9 @@ jobs:
       - run: npm run test:ui
       - run: npm run test:native
       - run: npm run package:mac
+      # An unsealed bundle opens fine here but shows as "damaged" once downloaded, so check the signature explicitly.
+      - name: Verify the app signature
+        run: codesign --verify --deep --strict --verbose=2 "$(find release -maxdepth 2 -name 'おむかえフォト.app' -print -quit)"
       - name: Smoke test the packaged app
         run: |
           packaged_app=$(find release -path '*/Contents/MacOS/おむかえフォト' -type f -print -quit)
