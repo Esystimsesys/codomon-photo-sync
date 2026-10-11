@@ -68,6 +68,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -91,10 +92,12 @@ jobs:
           ## 直したこと
           - （公開前に書く）
 
+          NOTES
+          # 許可の出し方を含む手順は README から写す。Releases の画面だけ見ても始められるようにするため。
+          .github/scripts/start-guide.sh README.md "$GH_REPO" "$tag" >> notes.md
+          cat >> notes.md <<'NOTES'
+
           ## 注意
-          - 署名・公証をしていないため、初回は開発元を確認できない警告が出ます。配布元を確認してから、システム設定の「プライバシーとセキュリティ」で個別に許可してください。
-          - 更新後に「フルディスクアクセス」や写真.appの操作許可をやり直す必要がある場合があります。
-          - Apple Silicon の Mac は `arm64`、Intel の Mac は `x64` のファイルを使います。
           - Intel 版（`x64`）は、自動テストでの確認だけで公開しています。
           NOTES
           prerelease=""
