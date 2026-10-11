@@ -1,10 +1,10 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync, chmodSync } from 'node:fs';
+import { mkdirSync, chmodSync, existsSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { autoSending } from '../shared/send';
-import type { ArchivePhoto, ArchivePost, Decision, FaceResult, Job, Person, Photo, Settings, UploadState } from '../shared/types';
+import type { ArchivePhoto, ArchivePost, Decision, FaceResult, Job, Person, Photo, Settings, TransferFile, UploadState } from '../shared/types';
 
 export function defaults(home = homedir()): Settings {
   return { saveRoot: join(home, 'Pictures/codomon'), album: 'コドモン', people: [],
@@ -86,10 +86,11 @@ export class Store {
     if (s.initialStartDate === '2000-01-01') s.initialStartDate = '';
     return { ...s, syncTimes: validateTimes(s.syncTimes, '同期', 2), faceTimes: validateTimes(s.faceTimes, '顔認識の更新') };
   }
-  saveSettings(s: Settings, today = localDay()): void {
+  saveSettings(s: Settings, today = localDay(), carriedAutoSendFrom = ''): void {
     const before = this.settings(), next = validateSettings(s);
     // 開始日は画面からは変えられない。自動送信をオンにした日を残し、オンのまま保存しても動かさない。
-    next.autoSendFrom = !autoSending(next) ? '' : autoSending(before) && before.autoSendFrom ? before.autoSendFrom : today;
+    // 別のMacから移したときは、そのMacでオンにした日を引き継ぐ。
+    next.autoSendFrom = !autoSending(next) ? '' : carriedAutoSendFrom || (autoSending(before) && before.autoSendFrom ? before.autoSendFrom : today);
     const destinationChanged = next.album !== before.album || next.photosLibrary !== before.photosLibrary;
     this.transaction(() => {
       // Import status belongs to a destination, while manual choices and the send ledger belong to the photo.
@@ -107,10 +108,57 @@ export class Store {
     const insert = this.db.prepare(`INSERT INTO photos(id,filename,path,date,title,postId,uploadState,sentAt,postedDate) VALUES(?,?,?,?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET filename=excluded.filename,path=excluded.path,date=excluded.date,title=excluded.title,postId=excluded.postId,
         postedDate=CASE WHEN excluded.postedDate<>'' THEN excluded.postedDate ELSE photos.postedDate END`);
+    // 別のMacで手動で選んだ・外した写真は、このMacに届いたときに反映する。
+    const carried = this.get<Record<string, 'include' | 'exclude'>>('carriedDecisions') ?? {};
+    let used = false;
     for (const p of photos) {
       const ledger = this.db.prepare('SELECT state,at FROM ledger WHERE filename=?').get(p.filename);
       insert.run(p.id,p.filename,p.path,p.date,p.title,p.postId,ledger ? String(ledger.state) : 'pending',ledger ? String(ledger.at) : null,p.postedDate ?? '');
+      if (carried[p.filename]) { this.db.prepare("UPDATE photos SET decision=? WHERE id=? AND decision='auto'").run(carried[p.filename], p.id); delete carried[p.filename]; used = true; }
     }
+    if (used) this.set('carriedDecisions', carried);
+  }
+  exportTransfer(appVersion: string, now = new Date()): TransferFile {
+    const ledger = this.db.prepare("SELECT filename,state,at FROM ledger WHERE state IN ('sent','skipped') ORDER BY filename").all()
+      .map(r => ({ filename: String(r.filename), state: r.state as 'sent' | 'skipped', at: String(r.at) }));
+    const decisions = new Map<string, 'include' | 'exclude'>(Object.entries(this.get<Record<string, 'include' | 'exclude'>>('carriedDecisions') ?? {}));
+    for (const r of this.db.prepare("SELECT filename,decision FROM photos WHERE decision IN ('include','exclude') ORDER BY filename").all()) decisions.set(String(r.filename), r.decision as 'include' | 'exclude');
+    return { format: 'omukae-photo-transfer', version: 1, exportedAt: now.toISOString(), appVersion, settings: this.settings(),
+      ledger, decisions: [...decisions].map(([filename, decision]) => ({ filename, decision })) };
+  }
+  /**
+   * Merges a transfer file from another Mac. Records already on this Mac win: a photo sent or skipped here stays so,
+   * and a manual choice made here is kept. This Mac's logins, save folder (once photos exist) and login item stay.
+   */
+  importTransfer(raw: unknown, today = localDay()): { ledger: number; photos: number; decisions: number } {
+    const t = raw as TransferFile;
+    if (!t || typeof t !== 'object' || t.format !== 'omukae-photo-transfer') throw new Error('おむかえフォトの移行用ファイルではありません');
+    if (t.version !== 1) throw new Error('この移行用ファイルは、このバージョンでは読み込めません。アプリを更新してください');
+    const filename = (v: unknown) => typeof v === 'string' && v.length > 0 && v.length <= 500 && !/[\x00-\x1f/]/.test(v);
+    if (!Array.isArray(t.ledger) || t.ledger.some(r => !r || !filename(r.filename) || !['sent','skipped'].includes(r.state) || typeof r.at !== 'string' || !Number.isFinite(Date.parse(r.at)))) throw new Error('移行用ファイルの送信記録が正しくありません');
+    if (!Array.isArray(t.decisions) || t.decisions.some(r => !r || !filename(r.filename) || !['include','exclude'].includes(r.decision))) throw new Error('移行用ファイルの写真の選択が正しくありません');
+    const imported = validateSettings(t.settings), current = this.settings();
+    const hasPhotos = !!this.db.prepare('SELECT 1 FROM photos LIMIT 1').get();
+    const carriedFrom = t.settings.autoSendFrom ?? '';
+    if (carriedFrom !== '' && !validDay(carriedFrom)) throw new Error('自動送信の開始日が正しくありません');
+    this.saveSettings({ ...imported,
+      saveRoot: hasPhotos ? current.saveRoot : imported.saveRoot,
+      photosLibrary: existsSync(imported.photosLibrary) ? imported.photosLibrary : current.photosLibrary,
+      launchAtLogin: current.launchAtLogin, setupComplete: current.setupComplete }, today, carriedFrom);
+    return this.transaction(() => {
+      let photos = 0, decisions = 0;
+      const ledger = this.db.prepare('INSERT INTO ledger VALUES(?,?,?) ON CONFLICT(filename) DO NOTHING');
+      const mark = this.db.prepare("UPDATE photos SET uploadState=?,sentAt=? WHERE filename=? AND uploadState IN ('pending','uncertain')");
+      for (const r of t.ledger) { ledger.run(r.filename, r.state, r.at); photos += Number(mark.run(r.state, r.at, r.filename).changes); }
+      const carried = this.get<Record<string, 'include' | 'exclude'>>('carriedDecisions') ?? {};
+      const decide = this.db.prepare("UPDATE photos SET decision=? WHERE filename=? AND decision='auto'");
+      for (const r of t.decisions) {
+        if (this.db.prepare('SELECT 1 FROM photos WHERE filename=?').get(r.filename)) decisions += Number(decide.run(r.decision, r.filename).changes);
+        else carried[r.filename] = r.decision;
+      }
+      this.set('carriedDecisions', carried);
+      return { ledger: t.ledger.length, photos, decisions };
+    });
   }
   upsertPosts(posts: ArchivePost[]): void { const q = this.db.prepare('INSERT INTO posts VALUES(?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value'); for (const p of posts) q.run(p.id,JSON.stringify(p)); }
   ingest(photos: ArchivePhoto[], posts: ArchivePost[]): void { this.transaction(()=>{ this.upsertPhotos(photos); this.upsertPosts(posts); }); }

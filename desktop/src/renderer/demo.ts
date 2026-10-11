@@ -13,6 +13,7 @@ export function createDemo(): DesktopApi {
   return { snapshot: async () => snapshot(), onChange(cb) { listeners.add(cb); return () => listeners.delete(cb); }, async action(action: Action) {
     if (action.type === 'chooseFolder') return {path: '/Users/demo/Pictures/おむかえフォト'};
     if (action.type === 'chooseLibrary') return {path: '/Users/demo/Pictures/Photos Library.photoslibrary'};
+    if (action.type === 'exportTransfer' || action.type === 'importTransfer') return {message: 'デモでは、移行用ファイルの書き出し・読み込みは行いません。'};
     if (action.type === 'settings') { const auto = (s: Snapshot['settings']) => s.miteneEnabled && s.sendMode === 'automatic'; const from = auto(state.settings) && state.settings.autoSendFrom ? state.settings.autoSendFrom : new Date().toLocaleDateString('sv-SE'); state.settings = {...structuredClone(action.settings), autoSendFrom: auto(action.settings) ? from : ''}; }
     if (action.type === 'login') { if(action.provider === 'codmon') state.codmonConnected = true; else state.miteneConnected = true; }
     if (action.type === 'decision') state.photos.forEach(p => {if(action.ids.includes(p.id)) p.decision = action.decision;});

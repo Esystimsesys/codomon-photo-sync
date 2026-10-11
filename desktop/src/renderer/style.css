@@ -1363,3 +1363,8 @@ dialog p:not(.eyebrow) {
 [data-shown-by] { padding-left: 16px; margin-left: 8px; border-left: 2px solid var(--line); }
 .subheading { font-size: 13px; margin: 24px 0 4px; }
 .settings-group { font-size: 13px; color: var(--muted); font-weight: 500; margin: 36px 0 12px; }
+/* 別のMacへ移す：2つの操作を並べ、幅が狭ければ折り返す。 */
+.button-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0 0; }
+.button-row + .helper { margin-top: 10px; }
+.transfer-hint { margin-top: 10px; }
+.transfer-hint p { margin: 0 0 8px; }

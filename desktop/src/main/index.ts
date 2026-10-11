@@ -109,6 +109,24 @@ async function action(raw:unknown):Promise<unknown>{
     case 'openPrivacy':await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles');break;
     case 'checkUpdate':await checkUpdate(true);break;
     case 'openUpdate':if(service.update)await shell.openExternal(service.update.url);break;
+    case 'exportTransfer':{
+      const r=await dialog.showSaveDialog({title:'移行用ファイルを書き出す',defaultPath:join(app.getPath('desktop'),`おむかえフォト-移行-${new Date().toLocaleDateString('sv-SE')}.json`),filters:[{name:'移行用ファイル',extensions:['json']}]});
+      if(r.canceled||!r.filePath)return null;
+      writeFileSync(r.filePath,JSON.stringify(store.exportTransfer(app.getVersion()),null,2),{mode:0o600});
+      // 移した先と二重に動かないよう、このMacでの自動同期とログイン時の起動を止める。
+      await saveSettings({...store.settings(),autoSync:false,launchAtLogin:false});
+      changed();return {message:'移行用ファイルを書き出しました。このMacでの自動同期とログイン時の起動はオフにしました。新しいMacで読み込んでください。'};
+    }
+    case 'importTransfer':{
+      const r=await dialog.showOpenDialog({title:'移行用ファイルを読み込む',properties:['openFile'],filters:[{name:'移行用ファイル',extensions:['json']}]});
+      if(r.canceled||!r.filePaths[0])return null;
+      const text=await readFile(r.filePaths[0],'utf8');
+      if(text.length>50_000_000)throw new Error('移行用ファイルが大きすぎます');
+      let data:unknown;try{data=JSON.parse(text);}catch{throw new Error('おむかえフォトの移行用ファイルではありません');}
+      const result=store.importTransfer(data);
+      const now=service.snapshot(),login=now.codmonConnected&&(!now.settings.miteneEnabled||now.miteneConnected)?'':'ログイン情報は引き継がないので、このMacでコドモン・みてねにログインしてください。';
+      changed();return {message:`移行用ファイルを読み込みました。設定と、みてねに送った記録${result.ledger}件を引き継ぎました。${login}`};
+    }
     default:throw new Error('対応していない操作です');
   }
   changed();return service.snapshot();

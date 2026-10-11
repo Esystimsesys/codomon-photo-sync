@@ -60,10 +60,21 @@ export type Action =
   | { type: 'openPost'; id: string }
   | { type: 'openPrivacy' }
   | { type: 'checkUpdate' }
-  | { type: 'openUpdate' };
+  | { type: 'openUpdate' }
+  | { type: 'exportTransfer' }
+  | { type: 'importTransfer' };
+/** 使うMacを変えるときに引き継ぐもの。ログイン情報はMacのキーチェーンで暗号化されているので含めない。 */
+export interface TransferFile {
+  format: 'omukae-photo-transfer'; version: 1; exportedAt: string; appVersion: string;
+  settings: Settings;
+  /** みてねに送った（または送らないことにした）写真。ファイル名で照合する。 */
+  ledger: { filename: string; state: 'sent' | 'skipped'; at: string }[];
+  /** 手動で選んだ・外した写真。 */
+  decisions: { filename: string; decision: 'include' | 'exclude' }[];
+}
 export interface DesktopApi {
   snapshot(): Promise<Snapshot>;
-  action(action: Action): Promise<Snapshot | { path: string } | null>;
+  action(action: Action): Promise<Snapshot | { path: string } | { message: string } | null>;
   onChange(callback: (snapshot: Snapshot) => void): () => void;
 }
 declare global { interface Window { desktop: DesktopApi; } }

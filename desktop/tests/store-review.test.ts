@@ -242,6 +242,33 @@ test('walking back still acquires an older range left over from a failed acquisi
   } finally { store.close(); }
 });
 
+test('a transfer file carries sends, manual choices and settings to another Mac without overriding its own records', () => {
+  const photo = (filename: string): ArchivePhoto => ({ id: `s:activities:${filename}`, filename, path: `/archive/${filename}`, date: '2026-10-01', title: '', postId: 'p' });
+  const old = new Store(':memory:'), mini = new Store(':memory:');
+  try {
+    old.saveSettings({ ...old.settings(), saveRoot: '/old/archive', people: [{ name: '子', album: '' }], miteneEnabled: true, sendMode: 'automatic', autoSync: true, setupComplete: true }, '2026-10-09');
+    old.ingest(['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg'].map(photo), []);
+    old.markSent([photo('a.jpg').id, photo('b.jpg').id]);
+    old.decide([photo('c.jpg').id], 'exclude');
+    old.decide([photo('d.jpg').id], 'include');
+    const file = JSON.parse(JSON.stringify(old.exportTransfer('0.1.0')));
+    // 新しいMacでは先に同期して、a・b・c が届いている。b はこのMacで「送らない」にした。
+    mini.saveSettings({ ...mini.settings(), saveRoot: '/mini/archive', launchAtLogin: true, setupComplete: true }, '2026-10-11');
+    mini.ingest(['a.jpg', 'b.jpg', 'c.jpg'].map(photo), []);
+    mini.seedFilenames(['b.jpg'], 'skipped');
+    assert.deepEqual(mini.importTransfer(file, '2026-10-11'), { ledger: 2, photos: 1, decisions: 1 });
+    const state = Object.fromEntries(mini.photos().map(p => [p.filename, [p.uploadState, p.decision]]));
+    assert.deepEqual(state, { 'a.jpg': ['sent', 'auto'], 'b.jpg': ['skipped', 'auto'], 'c.jpg': ['pending', 'exclude'] });
+    const s = mini.settings();
+    assert.deepEqual([s.saveRoot, s.launchAtLogin, s.autoSync, s.sendMode, s.autoSendFrom, s.people.map(p => p.name)], ['/mini/archive', true, true, 'automatic', '2026-10-09', ['子']]);
+    // まだ届いていない d は、届いたときに選択が反映される。送信済みの a を、もう一度届いても未送信には戻さない。
+    mini.ingest(['a.jpg', 'd.jpg'].map(photo), []);
+    assert.deepEqual(mini.photos().filter(p => ['a.jpg', 'd.jpg'].includes(p.filename)).map(p => [p.filename, p.uploadState, p.decision]), [['a.jpg', 'sent', 'auto'], ['d.jpg', 'pending', 'include']]);
+    assert.throws(() => mini.importTransfer({ ...file, format: 'other' }), /移行用ファイルではありません/);
+    assert.throws(() => mini.importTransfer({ ...file, ledger: [{ filename: '../x', state: 'sent', at: 'now' }] }), /送信記録/);
+  } finally { old.close(); mini.close(); }
+});
+
 test('schedule settings normalize times, reject duplicates and limit acquisition to two slots', () => {
   const base=defaults('/fixture');
   assert.deepEqual(validateSettings({...base,syncTimes:['21:00','17:30'],faceTimes:[]}).syncTimes,['17:30','21:00']);
