@@ -465,3 +465,21 @@ test('unchanged person album performs no mutation', async () => {
   assert.equal(f.commands.length,1); assert.ok(f.commands[0].startsWith('return'));
   assert.deepEqual([...f.albums.get(f.target)!],['first.jpeg']);
 });
+
+test('a video attached to a notice is recorded with the post, never as a photo', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(),'codomon-video-'));
+  const uploaded = {video_id:'740198',src_key:'25228/x.mov',file_name:'IMG_0665.mov',file_type:'video/quicktime',file_size:'130077733',expiration_datetime:'2026-10-20 12:26:03',video_conversion_status:'Unprocessed',video_dist_url:'',video_dist_thumbnail_url:'https://ps-api.codmon.com/manage/assets/img/ogp.png'};
+  const fake = {get:async(raw: string) => { const u = new URL(raw); return {
+    dispose:async()=>{},status:()=>200,headers:()=>({}),body:async()=>Buffer.from(''),
+    json:async()=>u.pathname.endsWith('/services/')?{data:{s:{}}}:u.pathname.endsWith('/timeline/')?{data:[
+      {id:1,timeline_kind:'topics',display_date:'2026-10-09',content:'<p>お手本</p>',attached_video_info:{uploaded_video:uploaded}},
+      {id:2,timeline_kind:'topics',display_date:'2026-10-09',content:'動画なし',attached_video_info:null},
+    ]}:{}
+  };}} as any;
+  try {
+    const result = await syncCodmonRequest({...settings,saveRoot:dir},fake,'2026-10-01','2026-10-13');
+    assert.deepEqual(result.errors,[]); assert.deepEqual(result.photos,[]);
+    assert.deepEqual(result.posts.map(p=>p.videos),[[{name:'IMG_0665.mov',size:130077733,expires:'2026-10-20 12:26:03'}],undefined]);
+    assert.match(await readFile(result.posts[0].path,'utf8'),/動画: IMG_0665\.mov（124MB・再生期限 2026-10-20 12:26:03）/);
+  } finally { await rm(dir,{recursive:true,force:true}); }
+});

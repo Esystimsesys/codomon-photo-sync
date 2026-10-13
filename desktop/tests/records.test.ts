@@ -13,3 +13,10 @@ test('contact notes become fields, even with raw line breaks inside JSON strings
 test('bill amounts are shown in yen', () => {
   assert.deepEqual(recordEntry(post('bills', '延長保育料 3200')).items, ['延長保育料 3,200円']);
 });
+
+test('videos show their size and the playback deadline in Japan time', () => {
+  const p = { ...post('topics', 'お手本'), videos: [{ name: 'IMG_0665.mov', size: 130077733, expires: '2026-10-20 12:26:03' }, { name: '動画', size: 0, expires: '' }] };
+  assert.deepEqual(recordEntry(p, new Date('2026-10-20T03:26:02Z')).videos, [
+    { name: 'IMG_0665.mov', size: '124MB', expires: '10月20日 12:26', expired: false, saved: false }, { name: '動画', size: '', expires: '', expired: false, saved: false }]);
+  assert.equal(recordEntry(p, new Date('2026-10-20T03:27:00Z')).videos[0].expired, true);
+});

@@ -1,13 +1,26 @@
 import { test, expect } from '@playwright/test';
 test('demo overview is isolated and shows fixture status', async ({page}) => {
  await page.goto('/'); await expect(page.getByText('体験用のデモです', {exact:false})).toBeVisible();
- await expect(page.getByRole('heading', {name:'写真8枚と記録2件を保存しています'})).toBeVisible();
+ await expect(page.getByRole('heading', {name:'写真8枚と記録3件を保存しています'})).toBeVisible();
  await page.getByRole('button', {name:'園の記録', exact:true}).click();
  await expect(page.getByRole('heading', {name:'秋の色をさがしに'})).toBeVisible();
+ const video = page.locator('.record-videos li');
+ await expect(video).toHaveCount(1);
+ await expect(video).toContainText('動画：sample.mov');
+ await expect(video).toContainText(/124MB・再生期限 \d+月\d+日 12:00/);
+});
+test('videos sit among the photos with a badge and open from the preview', async ({page}) => {
+ await page.goto('/'); await page.getByRole('button', {name:'写真', exact:true}).click();
+ await page.getByRole('button', {name:'すべて表示'}).click();
+ const card = page.locator('.photo-card').filter({has: page.locator('.video-badge')});
+ await expect(card).toHaveCount(1);
+ await card.getByRole('button', {name:'sample-2.mp4を大きく見る'}).click();
+ await page.getByRole('button', {name:'動画を再生'}).click();
+ await expect(page.getByRole('status').filter({hasText:'デモでは、動画は再生しません。'})).toBeVisible();
 });
 test('siblings: records filter by child, and children can be added and removed in settings', async ({page}) => {
  await page.goto('/'); await page.getByRole('button', {name:'園の記録', exact:true}).click();
- await expect(page.locator('.record')).toHaveCount(2);
+ await expect(page.locator('.record')).toHaveCount(3);
  await page.getByRole('button', {name:'さくら', exact:true}).click();
  await expect(page.locator('.record')).toHaveCount(1);
  await expect(page.locator('.record-child')).toHaveText('さくら・はると');

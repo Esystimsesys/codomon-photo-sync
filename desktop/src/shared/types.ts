@@ -34,7 +34,20 @@ export interface Photo extends ArchivePhoto {
   decision: Decision; autoSelected: boolean; reason: string; uploadState: UploadState;
   imported: boolean; importError: string | null; sentAt: string | null;
 }
-export interface ArchivePost { id: string; date: string; kind: string; title: string; body: string; path: string; attachments: string[]; author?: string; children?: string[]; }
+/**
+ * お知らせに付いた動画。コドモンで変換が済んだものは保存し、写真と同じく「写真」アプリ・顔認識・みてねの対象にする
+ * （写真の一覧には `.mp4` のファイルとして入る）。ここには記録に添える情報を持つ。
+ */
+export interface ArchiveVideo {
+  name: string;
+  /** バイト数。分からなければ0。 */
+  size: number;
+  /** 再生期限（コドモンの日時の文字列、日本時間）。なければ空。 */
+  expires: string;
+  /** 保存した動画のパス。変換前・期限切れで保存できなかったときはない。 */
+  path?: string;
+}
+export interface ArchivePost { id: string; date: string; kind: string; title: string; body: string; path: string; attachments: string[]; author?: string; children?: string[]; videos?: ArchiveVideo[]; }
 export interface SyncResult { photos: ArchivePhoto[]; posts: ArchivePost[]; errors: string[]; }
 export interface FaceResult { filename: string; person: string; selected: boolean; reason: string; }
 export interface Job { id: number; kind: string; startedAt: string; endedAt: string | null; status: 'running' | 'success' | 'error'; message: string; }
@@ -58,6 +71,7 @@ export type Action =
   | { type: 'chooseLibrary' }
   | { type: 'openArchive' }
   | { type: 'openPost'; id: string }
+  | { type: 'openVideo'; id: string }
   | { type: 'openPrivacy' }
   | { type: 'checkUpdate' }
   | { type: 'openUpdate' }

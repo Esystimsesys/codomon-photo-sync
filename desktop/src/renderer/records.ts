@@ -9,18 +9,27 @@ export interface RecordEntry {
   fields: [string, string][];
   items: string[];
   attachments: number;
+  videos: RecordVideo[];
 }
+export interface RecordVideo { name: string; size: string; expires: string; expired: boolean; saved: boolean; }
 
 const kindLabels: Record<string, string> = {activities:'活動記録',topics:'お知らせ',comments:'連絡帳',bills:'請求'};
 
-export function recordEntry(post: Post): RecordEntry {
+export function recordEntry(post: Post, now = new Date()): RecordEntry {
   const kind = kindLabels[post.kind] || post.kind;
   const note = contactNote(post.body.trim());
   // Bill records keep only "name amount" lines in the body.
   const items = kind === '請求' && !note ? post.body.split('\n').map(line => money(line.trim())).filter(Boolean) : [];
-  return { kind, title: post.title.trim(), author: post.author ?? '', text: note ? note.memo : items.length ? '' : tidy(post.body), fields: note?.fields ?? [], items, attachments: post.attachments.length };
+  return { kind, title: post.title.trim(), author: post.author ?? '', text: note ? note.memo : items.length ? '' : tidy(post.body), fields: note?.fields ?? [], items, attachments: post.attachments.length, videos: (post.videos ?? []).map(v => recordVideo(v, now)) };
 }
 
+/** 再生期限はコドモンの日本時間の日時（YYYY-MM-DD HH:mm:ss）。読めなければ期限なしとして扱う。 */
+function recordVideo(v: NonNullable<Post['videos']>[number], now: Date): RecordVideo {
+  const m = v.expires.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  const at = m ? Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6] ?? '00'}+09:00`) : NaN;
+  return { name: v.name, size: v.size ? `${Math.max(1, Math.round(v.size / 1024 / 1024)).toLocaleString('ja-JP')}MB` : '',
+    expires: m ? `${Number(m[2])}月${Number(m[3])}日 ${m[4]}:${m[5]}` : '', expired: Number.isFinite(at) && at < now.getTime(), saved: !!v.path };
+}
 const tidy = (text: string) => text.replace(/[ \t　]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim();
 const money = (text: string) => text.replace(/(^|\s)(\d+)$/, (_, space: string, n: string) => `${space}${Number(n).toLocaleString('ja-JP')}円`).trim();
 const list = (value: unknown) => Array.isArray(value) ? value.filter(v => v && typeof v === 'object') as Record<string, unknown>[] : [];

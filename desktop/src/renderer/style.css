@@ -359,6 +359,20 @@ main {
   padding: 0;
   min-width: 0;
 }
+.video-badge {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #fff;
+  background: #2f3a2ecc;
+  border-radius: 4px;
+  pointer-events: none;
+}
+.recent-photo {
+  position: relative;
+}
 .recent-photo img {
   width: 100%;
   aspect-ratio: 4/3;
@@ -922,6 +936,25 @@ legend {
   padding-left: 1.2em;
   font-size: 13px;
   line-height: 1.9;
+}
+.record-videos {
+  margin: 18px 0 24px;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.record-videos li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+}
+.record-video-name {
+  overflow-wrap: anywhere;
+}
+.record-videos small {
+  color: var(--muted);
 }
 .record-footer {
   border-top: 1px solid var(--line);

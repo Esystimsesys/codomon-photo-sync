@@ -4,6 +4,7 @@ import type { ArchivePhoto, Person, Photo, Settings, Snapshot, SyncResult, FaceR
 import { Store, archivePathAllowed, validDay, chosen } from './store';
 import type { Session, ConnectorOptions } from './connectors';
 import { beforeAutoSend } from '../shared/send';
+import { isVideo } from '../shared/media';
 export interface Vault { has(provider:string): boolean; get(provider:string): Session; put(provider:string,value:Session):void; }
 export interface Connections {
   manualLogin(provider:'codmon'|'mitene',options:ConnectorOptions):Promise<Session>;
@@ -13,7 +14,11 @@ export interface Connections {
   uploadMitene(settings:Settings,session:Session,photos:ArchivePhoto[],callbacks:{beforeSend:(ids:string[])=>void;onSent:(ids:string[])=>void},options:ConnectorOptions):Promise<void>;
   refreshMiteneSession?: (session:Session,options:ConnectorOptions)=>Promise<Session>;
   updatePersonAlbum?: (settings:Settings,person:Person,photos:ArchivePhoto[])=>Promise<void>;
+  /** Length of a saved video in seconds; null when unknown. */
+  videoSeconds?: (path:string)=>Promise<number|null>;
 }
+/** みてねにアップロードできる動画の長さ（プレミアム、1本あたり10分）。 */
+export const MITENE_VIDEO_SECONDS=600;
 /**
  * One child's album: photos judged to show that child, minus excluded ones. A manually included photo joins the album of
  * each child found in it at all (even too small to be chosen); with a single child it always joins.
@@ -85,16 +90,16 @@ export class Service {
       let analyzed=true;
       try{errors.push(...await this.analyzeInternal());}catch(e){analyzed=false;errors.push(safeError(e));}
       // Per-photo acquisition/import warnings never block already selected photos. Failed face analysis does.
-      if(analyzed&&settings.sendMode==='automatic'&&settings.miteneEnabled)await this.sendInternal();
+      const note=analyzed&&settings.sendMode==='automatic'&&settings.miteneEnabled?await this.sendInternal():'';
       if(errors.length)throw new Error(`${result.photos.length}枚の写真・${result.posts.length}件の記録を確認しました。一部に問題があります：${errors.slice(0,5).join(' / ')}`);
-      this.setProgress(`${result.photos.length}枚の写真・${result.posts.length}件の記録を確認しました`);
+      this.setProgress(`${result.photos.length}枚の写真・${result.posts.length}件の記録を確認しました${note}`);
     });
   }
   async analyze():Promise<void>{await this.exclusive('候補を更新',async()=>{
     const before=this.store.photos(), selectedBefore=new Set(before.filter(chosen).map(p=>p.id));
     const sentBefore=new Set(before.filter(p=>p.uploadState==='sent').map(p=>p.id));
     const warnings=await this.analyzeInternal();const s=this.store.settings();
-    if(s.sendMode==='automatic'&&s.miteneEnabled)await this.sendInternal();
+    const note=s.sendMode==='automatic'&&s.miteneEnabled?await this.sendInternal():'';
     if(warnings.length)throw new Error(warnings.join(' / '));
     const after=this.store.photos(), selectedAfter=new Set(after.filter(chosen).map(p=>p.id));
     const added=[...selectedAfter].filter(id=>!selectedBefore.has(id)).length;
@@ -103,7 +108,7 @@ export class Service {
     const summary=!s.people.length ? '顔認識を使う子どもは設定されていません。' : added||removed
       ? `写真の選択を更新しました（追加${added}枚・解除${removed}枚）。`
       : '顔認識を更新しました（選択中の写真に変更はありません）。';
-    this.setProgress(summary+(sent ? ` みてねに${sent}枚送信しました。` : ''));
+    this.setProgress(summary+(sent ? ` みてねに${sent}枚送信しました。` : '')+note);
   });}
   async analyzeInternal():Promise<string[]>{
     const s=this.store.settings();const errors:string[]=[];
@@ -120,17 +125,24 @@ export class Service {
     this.changed();return errors;
   }
   async send(ids:string[]):Promise<void>{await this.exclusive('みてねへ送信',async()=>{await this.sendInternal(ids);});}
-  async sendInternal(ids?:string[]):Promise<void>{
+  /** Returns a note on videos left unsent, for the summary of the job that triggered sending. */
+  async sendInternal(ids?:string[]):Promise<string>{
     const settings=this.store.settings();if(!settings.miteneEnabled)throw new Error('設定で「みてねへの送信を使う」をオンにしてください');
-    if(ids){for(const id of ids){const p=this.store.photo(id);if(!p||p.uploadState!=='pending')throw new Error('未送信の写真だけにチェックしてください');}this.store.decide(ids,'include');}
+    // みてねは10分を超える動画を受け付けない。送れば失敗して「要確認」になるだけなので、初めから送らない。長さが分からない動画は止めない。
+    const tooLong=async(p:ArchivePhoto)=>isVideo(p.filename)&&!!this.connectors.videoSeconds&&((await this.connectors.videoSeconds(p.path))??0)>MITENE_VIDEO_SECONDS;
+    if(ids){for(const id of ids){const p=this.store.photo(id);if(!p||p.uploadState!=='pending')throw new Error('未送信の写真だけにチェックしてください');if(await tooLong(p))throw new Error('10分を超える動画は、みてねの上限のため送れません。チェックを外してください');}this.store.decide(ids,'include');}
     // 自動送信（ids なし）では、自動送信をオンにした日より前に届いた写真は送らない。
     const candidates=this.store.eligible(ids).filter(p=>ids||!beforeAutoSend(p,settings));
     // A filename is the ledger identity. Never submit two rows with the same filename in one batch.
-    const photos=[...new Map(candidates.map(p=>[p.filename,p])).values()];
-    if(!photos.length){this.setProgress('みてねに送る写真はありません');return;}
+    const unique=[...new Map(candidates.map(p=>[p.filename,p])).values()];
+    const long=new Set<string>();for(const p of unique)if(await tooLong(p))long.add(p.id);
+    const photos=unique.filter(p=>!long.has(p.id));
+    const longNote=long.size?`（10分を超える動画${long.size}本は、みてねの上限のため送っていません）`:'';
+    if(!photos.length){this.setProgress(`みてねに送る写真はありません${longNote}`);return longNote;}
     for(const p of photos)if(!await archivePathAllowed(p.path,settings.saveRoot))throw new Error('送る写真が保存先に見つかりません。「コドモンから期間を指定して取り込む」で取り込み直してください');
     await this.connectors.uploadMitene(settings,this.session('mitene'),photos,{beforeSend:ids=>{this.store.markSending(ids);this.changed();},onSent:ids=>{this.store.markSent(ids);this.changed();}},this.connectorOptions('mitene'));
-    this.setProgress(`${photos.length}枚をみてねへ送信しました`);
+    this.setProgress(`${photos.length}枚をみてねへ送信しました${longNote}`);
+    return longNote;
   }
   async scheduled(now=new Date()):Promise<void>{
     const s=this.store.settings();if(this.busy||!s.setupComplete||!s.autoSync||this.options.demo||this.options.validation)return;

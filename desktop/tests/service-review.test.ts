@@ -354,3 +354,22 @@ test('face history distinguishes unchanged selection from added and removed phot
     assert.equal(f.store.photo('second.jpeg')?.decision,'include');
   }finally{await f.close();}
 });
+test('videos are chosen by face and sent like photos, except those longer than mitene accepts', async () => {
+  const f = await fixture({ people: [{ name: '対象', album: '' }], sendMode: 'automatic' });
+  try {
+    const videos: ArchivePhoto[] = [];
+    for (const id of ['short-1.mp4', 'long-2.mp4']) {
+      const path = join(f.archive, id); await writeFile(path, 'synthetic video fixture');
+      videos.push({ id, filename: id, path, date: dayNow(), title: '合成試験', postId: 'synthetic' });
+    }
+    f.store.ingest(videos, []);
+    f.connections.analyzePhotos = async () => [...f.files, ...videos].map(p => ({ filename: p.filename, person: '対象', selected: true, reason: '' }));
+    f.connections.videoSeconds = async path => path.endsWith('long-2.mp4') ? 900 : 123.5;
+    await f.service.analyze();
+    assert.deepEqual(f.uploads, [['first.jpeg', 'long-2.mp4', 'second.jpeg', 'short-1.mp4', 'third.jpeg'].filter(id => id !== 'long-2.mp4')]);
+    assert.equal(f.store.photo('long-2.mp4')?.uploadState, 'pending');
+    assert.match(f.store.jobs()[0].message, /10分を超える動画1本は、みてねの上限のため送っていません/);
+    await assert.rejects(f.service.send(['long-2.mp4']), /10分を超える動画は、みてねの上限のため送れません/);
+    assert.equal(f.uploads.length, 1);
+  } finally { await f.close(); }
+});
