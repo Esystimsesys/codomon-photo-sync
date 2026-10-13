@@ -956,13 +956,103 @@ legend {
 .record-videos small {
   color: var(--muted);
 }
-.record-footer {
-  border-top: 1px solid var(--line);
-  padding-top: 15px;
+.record {
+  scroll-margin-top: 24px;
+}
+.record.focused {
+  border-color: #64865c;
+  box-shadow: 0 0 0 1px #64865c;
+}
+.record:focus {
+  outline: none;
+}
+.record-media {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 18px 0 20px;
+}
+.record-thumb {
+  position: relative;
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--cream);
+  aspect-ratio: 1;
+  cursor: zoom-in;
+}
+.record-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.record-thumb .video-badge {
+  top: 6px;
+  right: 6px;
+}
+.record-files {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin: 18px 0 20px;
+  padding: 0;
+  list-style: none;
+}
+.record-file {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 12px 8px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+.record-file:hover {
+  border-color: #64865c;
+}
+.record-file img {
+  width: 54px;
+  height: 72px;
+  object-fit: cover;
+  object-position: top;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  flex-shrink: 0;
+}
+.record-file span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.record-file strong {
+  font-size: 13px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.record-file small {
   font-size: 12px;
   color: var(--muted);
+}
+.record-body.clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.record-toggle {
+  display: block;
+  margin: 0 0 20px;
+}
+.record > :last-child {
+  margin-bottom: 0;
 }
 dialog {
   border: 1px solid var(--line);
@@ -1249,15 +1339,95 @@ dialog p:not(.eyebrow) {
   color: var(--muted);
   font-size: 12px;
 }
+/* 写真を大きく見ている間は、裏の画面を動かさない。 */
+html:has(dialog[open]) {
+  overflow: hidden;
+}
+dialog {
+  overscroll-behavior: contain;
+}
+.full-photo-frame {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  margin: auto;
+}
 .full-photo {
   display: block;
   max-width: 100%;
   max-height: 72vh;
-  margin: auto;
   object-fit: contain;
+}
+.full-photo-frame .video-badge,
+.full-photo-frame .photo-status,
+.full-photo-frame .photo-children li {
+  font-size: 12px;
+}
+.full-photo-frame .photo-children {
+  left: 12px;
+  bottom: 12px;
+  right: 100px;
+}
+.full-photo-frame .photo-status {
+  right: 12px;
+  bottom: 12px;
+}
+.full-photo-frame .video-badge {
+  top: 12px;
+  right: 12px;
 }
 .photo-dialog form > p {
   margin: 12px 0 0;
+}
+.photo-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.photo-record {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--cream);
+}
+.photo-record div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.photo-record small {
+  font-size: 12px;
+  color: var(--muted);
+}
+.photo-record strong {
+  font-size: 14px;
+}
+.photo-record p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #66715f;
+  overflow-wrap: anywhere;
+}
+.photo-record .button {
+  flex-shrink: 0;
+}
+@media (max-width: 720px) {
+  .record-media {
+    grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  }
+  .photo-record {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 .library-setting {

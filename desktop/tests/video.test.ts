@@ -77,6 +77,7 @@ test('sync saves a converted video once as an MP4 photo entry, links it from the
     assert.ok(existsSync(videoThumbnailPath(dir, 'IMG_0665-130077733.mp4')));
     assert.deepEqual((await readdir(path.join(dir, '2026-10-13'))).filter(f => f.startsWith('.')), [], 'no partial files are left');
     assert.equal(first.posts[0].videos?.[0].path, dest);
+    assert.deepEqual(first.posts[0].photos, ['IMG_0665-130077733.mp4']);
     assert.match(await readFile(first.posts[0].path, 'utf8'), /\[動画: IMG_0665\.mov（124MB・再生期限 2026-10-27 08:57:01）\]\(\.\.\/IMG_0665-130077733\.mp4\)/);
 
     // 期間延長で別の日に再掲された同じ動画は、取り直さずに最初の保存先を使う。

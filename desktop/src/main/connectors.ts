@@ -442,7 +442,8 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
           const photoLinks = [...photoPaths].map(p => `![写真](${link(p)})`);
           const attachmentLinks = attachments.map(p => `[添付ファイル](${link(p)})`);
           await atomicWrite(markdown, `# ${date} ${title}\n\n${kind}${author ? `\n\n投稿者: ${author}` : ''}${names.length ? `\n\n対象: ${names.join('・')}` : ''}\n\n${body}\n\n${[...photoLinks, ...attachmentLinks, ...videos.map(v => savedVideo ? `[${videoLine(v)}](${link(savedVideo)})` : videoLine(v))].join('\n\n')}\n`);
-          result.posts.push({ id, date, kind, title, body, path: markdown, attachments, ...(author ? { author } : {}), ...(names.length ? { children: names } : {}), ...(videos.length ? { videos: videos.map(v => savedVideo ? { ...v, path: savedVideo } : v) } : {}) });
+          const media = [...[...photoPaths].map(p => path.basename(p)), ...(savedVideo ? [path.basename(savedVideo)] : [])];
+          result.posts.push({ id, date, kind, title, body, path: markdown, attachments, ...(media.length ? { photos: media } : {}), ...(author ? { author } : {}), ...(names.length ? { children: names } : {}), ...(videos.length ? { videos: videos.map(v => savedVideo ? { ...v, path: savedVideo } : v) } : {}) });
         } catch (e) { result.errors.push(`${date} 記録保存: ${errorText(e)}`); }
       }
     } }

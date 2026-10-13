@@ -51,6 +51,13 @@ function browserExecutable():string|undefined{
   return undefined;
 }
 const VIDEO_PLACEHOLDER='<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360"><rect width="640" height="360" fill="#d9d6cc"/><circle cx="320" cy="180" r="44" fill="#fff" opacity=".85"/><path d="M306 158 L342 180 L306 202 Z" fill="#6b6a63"/></svg>';
+const ATTACHMENT_PLACEHOLDER=(type:string)=>`<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400" viewBox="0 0 300 400"><rect width="300" height="400" fill="#f1efe6"/><path d="M70 50 H190 L240 100 V350 H70 Z" fill="#fff" stroke="#c9c5b6" stroke-width="4"/><path d="M190 50 V100 H240" fill="none" stroke="#c9c5b6" stroke-width="4"/><text x="155" y="250" text-anchor="middle" font-size="34" font-family="sans-serif" fill="#6b6a63">${type.replace(/[^A-Za-z0-9]/g,'').slice(0,5)}</text></svg>`;
+/** A record's attachment, only while it is still inside the archive. */
+async function attachmentPath(postId:unknown,index:unknown):Promise<string|null>{
+  if(typeof postId!=='string'||!Number.isInteger(index))return null;
+  const file=store.posts().find(p=>p.id===postId)?.attachments[index as number];
+  return file&&await archivePathAllowed(file,store.settings().saveRoot)?file:null;
+}
 function notify(message:string):void {if(!demo&&!test&&Notification.isSupported())new Notification({title:'おむかえフォト',body:message}).show();}
 const RELEASES='https://api.github.com/repos/Esystimsesys/codomon-photo-sync/releases/latest';
 /** Only published, non-prerelease versions count. Installing stays manual because unsigned apps cannot auto-update. */
@@ -107,7 +114,7 @@ async function action(raw:unknown):Promise<unknown>{
     case 'chooseFolder':{const r=await dialog.showOpenDialog({title:'写真・記録の保存先',properties:['openDirectory','createDirectory']});return r.canceled?null:{path:r.filePaths[0]};}
     case 'chooseLibrary':{const r=await dialog.showOpenDialog({title:'写真ライブラリを選ぶ',properties:['openFile','openDirectory'],filters:[{name:'写真ライブラリ',extensions:['photoslibrary','sqlite']}]});return r.canceled?null:{path:r.filePaths[0].endsWith('.photoslibrary')?join(r.filePaths[0],'database/Photos.sqlite'):r.filePaths[0]};}
     case 'openArchive':{mkdirSync(store.settings().saveRoot,{recursive:true,mode:0o700});const error=await shell.openPath(store.settings().saveRoot);if(error)throw new Error('保存先を開けませんでした');break;}
-    case 'openPost':{const post=store.posts().find(p=>p.id===a.id);if(!post||!await archivePathAllowed(post.path,store.settings().saveRoot))throw new Error('記録が見つかりません');const err=await shell.openPath(post.path);if(err)throw new Error('記録を開けませんでした');break;}
+    case 'openAttachment':{const file=await attachmentPath(a.id,a.index);if(!file)throw new Error('添付ファイルが見つかりません');const err=await shell.openPath(file);if(err)throw new Error('添付ファイルを開けませんでした');break;}
     case 'openVideo':{const photo=store.photo(a.id);if(!photo||!isVideo(photo.filename)||!await archivePathAllowed(photo.path,store.settings().saveRoot))throw new Error('動画が見つかりません');const err=await shell.openPath(photo.path);if(err)throw new Error('動画を開けませんでした');break;}
     case 'openPrivacy':await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles');break;
     case 'checkUpdate':await checkUpdate(true);break;
@@ -153,7 +160,16 @@ async function ready():Promise<void>{
     try{const u=new URL(request.url);if(u.hostname!=='app')return new Response('',{status:403});const file=resolve(renderer,'.'+decodeURIComponent(u.pathname));const rel=relative(renderer,file);if(rel.startsWith('..')||isAbsolute(rel))return new Response('',{status:403});const response=await net.fetch(pathToFileURL(file).href);const headers=new Headers(response.headers);headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' codomon-photo: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'");return new Response(response.body,{status:response.status,headers});}catch{return new Response('',{status:404});}
   });
   protocol.handle('codomon-photo',async request=>{
-    try{const u=new URL(request.url);if(u.hostname!=='photo')return new Response('',{status:403});const photo=store.photo(decodeURIComponent(u.pathname.slice(1)));const root=store.settings().saveRoot;if(!photo||!await archivePathAllowed(photo.path,root))return new Response('',{status:404});
+    try{const u=new URL(request.url);
+      // Attachments are listed by a picture of their first page (Quick Look), or by the image itself.
+      if(u.hostname==='attachment'){
+        const [postId,index]=u.pathname.slice(1).split('/').map(decodeURIComponent),file=await attachmentPath(postId,Number(index));if(!file)return new Response('',{status:404});
+        const ext=extname(file).slice(1).toLowerCase(),image:Record<string,string>={jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',gif:'image/gif',webp:'image/webp'};
+        if(image[ext])return new Response(await readFile(file),{headers:{'Content-Type':image[ext],'Cache-Control':'no-store'}});
+        const thumbnail=await nativeImage.createThumbnailFromPath(file,{width:480,height:480}).catch(()=>null);
+        return thumbnail&&!thumbnail.isEmpty()?new Response(new Uint8Array(thumbnail.toPNG()),{headers:{'Content-Type':'image/png','Cache-Control':'no-store'}}):new Response(ATTACHMENT_PLACEHOLDER(ext.toUpperCase()),{headers:{'Content-Type':'image/svg+xml','Cache-Control':'no-store'}});
+      }
+      if(u.hostname!=='photo')return new Response('',{status:403});const photo=store.photo(decodeURIComponent(u.pathname.slice(1)));const root=store.settings().saveRoot;if(!photo||!await archivePathAllowed(photo.path,root))return new Response('',{status:404});
       // A video is listed by its thumbnail; without one, a plain placeholder keeps the grid even.
       if(isVideo(photo.filename)){const thumbnail=connectors.videoThumbnailPath(root,photo.filename);return await archivePathAllowed(thumbnail,root)?new Response(await readFile(thumbnail),{headers:{'Content-Type':'image/jpeg','Cache-Control':'no-store'}}):new Response(VIDEO_PLACEHOLDER,{headers:{'Content-Type':'image/svg+xml','Cache-Control':'no-store'}});}
       return new Response(await readFile(photo.path),{headers:{'Content-Type':extname(photo.path)==='.svg'&&demo?'image/svg+xml':'image/jpeg','Cache-Control':'no-store'}});}catch{return new Response('',{status:404});}

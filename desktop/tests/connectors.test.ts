@@ -207,6 +207,7 @@ test('each record links its shared photos while the upload list stays deduplicat
       for (const post of result.posts) {
         const markdown = await readFile(post.path,'utf8');
         assert.equal(markdown.match(/!\[写真\]\(\.\.\/shared.jpeg\)/g)?.length,1);
+        assert.deepEqual(post.photos,['shared.jpeg'],'both records list the shared photo for the record screen');
       }
     }
     assert.equal(downloads,1);

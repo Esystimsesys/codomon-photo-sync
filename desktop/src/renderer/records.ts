@@ -8,9 +8,10 @@ export interface RecordEntry {
   text: string;
   fields: [string, string][];
   items: string[];
-  attachments: number;
+  files: RecordFile[];
   videos: RecordVideo[];
 }
+export interface RecordFile { name: string; type: string; }
 export interface RecordVideo { name: string; size: string; expires: string; expired: boolean; saved: boolean; }
 
 const kindLabels: Record<string, string> = {activities:'活動記録',topics:'お知らせ',comments:'連絡帳',bills:'請求'};
@@ -20,7 +21,19 @@ export function recordEntry(post: Post, now = new Date()): RecordEntry {
   const note = contactNote(post.body.trim());
   // Bill records keep only "name amount" lines in the body.
   const items = kind === '請求' && !note ? post.body.split('\n').map(line => money(line.trim())).filter(Boolean) : [];
-  return { kind, title: post.title.trim(), author: post.author ?? '', text: note ? note.memo : items.length ? '' : tidy(post.body), fields: note?.fields ?? [], items, attachments: post.attachments.length, videos: (post.videos ?? []).map(v => recordVideo(v, now)) };
+  return { kind, title: post.title.trim(), author: post.author ?? '', text: note ? note.memo : items.length ? '' : tidy(post.body), fields: note?.fields ?? [], items, files: post.attachments.map(recordFile), videos: (post.videos ?? []).map(v => recordVideo(v, now)) };
+}
+
+/** 添付は `<記録の識別子>-<ハッシュ12桁>-<元の名前>` で保存されるので、元の名前だけを見せる。 */
+export function recordFile(file: string): RecordFile {
+  const base = file.split('/').pop() || file, name = base.replace(/^.*?-[0-9a-f]{12}-/, '') || base;
+  const ext = name.match(/\.([a-z0-9]{1,5})$/i)?.[1].toLowerCase() ?? '';
+  return { name, type: ext === 'pdf' ? 'PDF' : /^(jpe?g|png|gif|webp|heic)$/.test(ext) ? '画像' : ext ? ext.toUpperCase() : 'ファイル' };
+}
+/** 写真から記録をたどったときに添える、本文の書き出し。 */
+export function recordExcerpt(r: RecordEntry, max = 90): string {
+  const text = (r.text || r.fields.map(([k, v]) => `${k} ${v}`).join('　') || r.items.join('　')).replace(/\s+/g, ' ').trim();
+  return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
 /** 再生期限はコドモンの日本時間の日時（YYYY-MM-DD HH:mm:ss）。読めなければ期限なしとして扱う。 */

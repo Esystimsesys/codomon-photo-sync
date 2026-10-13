@@ -1,8 +1,8 @@
 import type { Action, DesktopApi, Job, Person, Photo, Settings, Snapshot } from '../shared/types';
-import { createDemo, demoImage } from './demo';
+import { createDemo, demoDocument, demoImage } from './demo';
 import './style.css';
 import { icon, type IconName } from './icons';
-import { recordEntry, type RecordEntry } from './records';
+import { recordEntry, recordExcerpt, type RecordEntry } from './records';
 import { beforeAutoSend } from '../shared/send';
 import { isVideo } from '../shared/media';
 const brandIcon = new URL('../../build/icon.svg', import.meta.url).href;
@@ -19,6 +19,9 @@ let notice = '';
 let error = '';
 let setup = false;
 let recordChild = '';
+// 記録ごとに、本文を開いたもの。写真から飛んできた記録は目立たせる。
+const openTexts = new Set<string>();
+let focusRecord = '';
 // Rows typed into the settings form survive a re-render even before they are saved.
 let draftPeople: Person[] | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -73,6 +76,7 @@ function reasonText(p: Photo): string {
  return faceText(p.reason, '子ども');
 }
 function photoURL(photo: Photo, index: number) { return browserDemo || state.demo ? demoImage(index) : `codomon-photo://photo/${encodeURIComponent(photo.id)}`; }
+function attachmentURL(postId: string, index: number, type: string) { return browserDemo || state.demo ? demoDocument(type) : `codomon-photo://attachment/${encodeURIComponent(postId)}/${index}`; }
 function nav(id: typeof page, name: IconName, text: string) { return `<button class="nav ${page === id ? 'active' : ''}" data-page="${id}" ${page === id ? 'aria-current="page"' : ''}>${icon(name)}${text}</button>`; }
 function render() {
  const oldForm = document.querySelector<HTMLFormElement>('#settings-form');
@@ -152,10 +156,13 @@ function photosView() {
   : `<span>${chosen.length}枚にチェック中</span><div class="selection-actions"><button class="button small" data-bulk="include" ${disabled()}>選択する</button><button class="button small" data-bulk="exclude" ${disabled()}>選択から外す</button>${s.miteneEnabled ? sendButton : ''}</div>`;
  return `<div class="heading compact"><div><h1>写真</h1><p class="muted">${lead}</p></div>${s.people.length ? `<button class="button" data-action="analyze" ${disabled()}>顔認識を更新</button>` : ''}</div>${tasks}${nav}<div class="selection-bar"><label class="check"><input type="checkbox" id="select-all" ${photos.length && photos.every(p => selected.has(p.id)) ? 'checked' : ''} ${photos.length ? '' : 'disabled'}>表示中の写真すべてにチェック</label>${actions}</div>${photos.length ? `<div class="photo-grid">${photos.map(p => photoCard(p, true)).join('')}</div>` : empty('この条件に当てはまる写真はありません', views[filter] ? '「写真一覧に戻る」から、ほかの写真を見られます。' : 'ほかのタブを選んでください。')}${s.miteneEnabled ? `<details class="advanced"><summary>すでにみてねに送った写真を登録する</summary><p>このアプリを使う前に、手動でみてねに送った写真などを「送らない」にします。写真は送らず、今後も送る写真に出しません。</p><button class="button" data-seed ${!chosen.length || chosen.length !== sendable.length || disabled() ? 'disabled' : ''}>チェックした${chosen.length}枚を送らないことにする</button>${chosen.length !== sendable.length ? '<p class="helper">未送信で、選択から外していない写真だけにチェックしてください。</p>' : ''}</details>` : ''}`;
 }
+/** 写真に重ねる印（動画・写っている子ども・送信の状態）。一覧と大きく見る画面で同じものを出す。 */
+function photoMarks(p: Photo, children: string[]) {
+ // 未送信はふつうの状態なので、印を付けるのはそれ以外のときだけ。
+ return `${isVideo(p.filename) ? '<span class="video-badge">動画</span>' : ''}${children.length ? `<ul class="photo-children" aria-label="写っている子ども">${children.map(name => `<li>${escape(name)}</li>`).join('')}</ul>` : ''}${p.uploadState !== 'pending' ? `<span class="photo-status ${p.uploadState}">${label[p.uploadState]}</span>` : ''}`;
+}
 function photoCard(p: Photo, selectable: boolean) {
  const s = state.settings, name = escape(p.title || p.filename);
- // 未送信はふつうの状態なので、印を付けるのはそれ以外のときだけ。
- const badge = p.uploadState !== 'pending' ? `<span class="photo-status ${p.uploadState}">${label[p.uploadState]}</span>` : '';
  const decide = (value: Photo['decision'], text: string, cls: string) => `<button type="button" class="${cls}" data-decision="${escape(p.id)}" data-value="${value}" aria-label="${escape(p.filename)}：${text}" ${disabled()}>${text}</button>`;
  const children = selectable ? presentChildren(p) : [];
  // 名前はバッジで分かるので、写っている子どもを説明するだけの文は出さない。
@@ -163,22 +170,69 @@ function photoCard(p: Photo, selectable: boolean) {
  // 送信済み・要確認の写真は、送るかどうかをもう選べないので操作を出さない。
  // 設定前の写真の一覧では「送る／送らない」だけを決める。「外す」は子どものアルバムからも外れるので出さない。
  const decision = selectable && filter !== 'older' && (p.uploadState === 'pending' || !s.miteneEnabled) ? `<div class="decision">${candidate(p) ? `<span class="chosen">✓ 選択中</span>${decide('exclude', '外す', 'button small')}` : `<span class="not-chosen">未選択</span>${decide('include', '選択する', 'button small')}`}${p.decision !== 'auto' && s.people.length ? decide('auto', '自動に戻す', 'text-button') : ''}</div>` : '';
- return `<article class="photo-card ${selected.has(p.id) ? 'selected' : ''}"><div class="photo-image"><button class="photo-preview" data-preview="${escape(p.id)}" aria-label="${escape(p.filename)}を大きく見る"><img src="${photoURL(p, state.photos.indexOf(p))}" alt="${escape(p.title)}" loading="lazy"></button>${selectable ? `<label class="photo-select"><input type="checkbox" data-select="${escape(p.id)}" aria-label="${escape(p.filename)}にチェック" ${selected.has(p.id) ? 'checked' : ''}></label>` : ''}${isVideo(p.filename) ? '<span class="video-badge">動画</span>' : ''}${children.length ? `<ul class="photo-children" aria-label="写っている子ども">${children.map(name => `<li>${escape(name)}</li>`).join('')}</ul>` : ''}${badge}</div><div class="photo-info"><small>${escape(day(p.date))}</small><h3>${name}</h3>${reason ? `<p class="reason">${escape(reason)}</p>` : ''}${decision}${p.importError ? `<p class="error-text">「写真」アプリ：${escape(p.importError)}</p>` : ''}${p.uploadState === 'uncertain' ? `<div class="resolve-actions" role="group" aria-label="送信結果"><button data-resolve="sent" data-id="${escape(p.id)}" ${disabled()}>届いていた</button><button data-resolve="retry" data-id="${escape(p.id)}" ${disabled()}>届いていない</button><button data-resolve="skipped" data-id="${escape(p.id)}" ${disabled()}>送らない</button></div>` : ''}</div></article>`;
+ return `<article class="photo-card ${selected.has(p.id) ? 'selected' : ''}"><div class="photo-image"><button class="photo-preview" data-preview="${escape(p.id)}" aria-label="${escape(p.filename)}を大きく見る"><img src="${photoURL(p, state.photos.indexOf(p))}" alt="${escape(p.title)}" loading="lazy"></button>${selectable ? `<label class="photo-select"><input type="checkbox" data-select="${escape(p.id)}" aria-label="${escape(p.filename)}にチェック" ${selected.has(p.id) ? 'checked' : ''}></label>` : ''}${photoMarks(p, children)}</div><div class="photo-info"><small>${escape(day(p.date))}</small><h3>${name}</h3>${reason ? `<p class="reason">${escape(reason)}</p>` : ''}${decision}${p.importError ? `<p class="error-text">「写真」アプリ：${escape(p.importError)}</p>` : ''}${p.uploadState === 'uncertain' ? `<div class="resolve-actions" role="group" aria-label="送信結果"><button data-resolve="sent" data-id="${escape(p.id)}" ${disabled()}>届いていた</button><button data-resolve="retry" data-id="${escape(p.id)}" ${disabled()}>届いていない</button><button data-resolve="skipped" data-id="${escape(p.id)}" ${disabled()}>送らない</button></div>` : ''}</div></article>`;
 }
 const recordChildren = () => [...new Set(state.posts.flatMap(p => p.children ?? []))];
-function recordView(r: RecordEntry, p: Snapshot['posts'][number], named: boolean) {
+type Post = Snapshot['posts'][number];
+/** 記録に付いた写真・動画。記録が持つ一覧（新しい取り込み）と、写真側の記録（以前の取り込み）の両方から集める。 */
+function recordMedia(): Map<string, Photo[]> {
+ const byId = new Map(state.photos.map(p => [p.id, p])), media = new Map<string, Photo[]>();
+ for(const post of state.posts) {
+  const ids = new Set([...(post.photos ?? []), ...state.photos.filter(p => p.postId === post.id).map(p => p.id)]);
+  media.set(post.id, [...ids].map(id => byId.get(id)).filter((p): p is Photo => !!p));
+ }
+ return media;
+}
+function recordView(r: RecordEntry, p: Post, named: boolean, photos: Photo[]) {
+ const media = photos.length ? `<div class="record-media" role="group" aria-label="写真 ${photos.length}枚">${photos.map(photo => `<button class="record-thumb" data-preview="${escape(photo.id)}" data-preview-post="${escape(p.id)}" aria-label="${escape(photo.filename)}を大きく見る"><img src="${photoURL(photo, state.photos.indexOf(photo))}" alt="" loading="lazy">${isVideo(photo.filename) ? '<span class="video-badge">動画</span>' : ''}</button>`).join('')}</div>` : '';
+ const files = r.files.length ? `<ul class="record-files">${r.files.map((f, i) => `<li><button class="record-file" data-attachment="${escape(p.id)}" data-index="${i}" aria-label="${escape(f.name)}を開く"><img src="${attachmentURL(p.id, i, f.type)}" alt="" loading="lazy"><span><strong>${escape(f.name)}</strong><small>${escape(f.type)}を開く ↗</small></span></button></li>`).join('')}</ul>` : '';
  const fields = r.fields.length ? `<dl class="record-fields">${r.fields.map(([k, v]) => `<div><dt>${escape(k)}</dt><dd>${escape(v)}</dd></div>`).join('')}</dl>` : '';
  const items = r.items.length ? `<ul class="record-items">${r.items.map(i => `<li>${escape(i)}</li>`).join('')}</ul>` : '';
- const videos = r.videos.length ? `<ul class="record-videos">${r.videos.map(v => `<li><span class="record-video-name">動画：${escape(v.name)}</span><small>${[v.size, v.saved ? '保存済み' : v.expired ? '再生期限切れ' : v.expires ? `再生期限 ${v.expires}` : ''].filter(Boolean).map(escape).join('・')}</small></li>`).join('')}</ul>` : '';
- return `<article class="record"><div class="record-meta"><span class="pill">${escape(r.kind)}</span><time datetime="${escape(p.date)}">${escape(day(p.date))}</time>${r.author ? `<span class="record-author">${escape(r.author)}</span>` : ''}${named && p.children?.length ? `<span class="record-child">${escape(p.children.join('・'))}</span>` : ''}</div>${r.title ? `<h2>${escape(r.title)}</h2>` : ''}${r.text ? `<p class="record-body">${escape(r.text)}</p>` : ''}${fields}${items}${videos}<div class="record-footer"><span>${r.attachments ? `添付ファイル ${r.attachments}件` : ''}</span><button class="text-button" data-post="${escape(p.id)}">記録ファイルを開く ↗</button></div></article>`;
+ // 保存した動画は写真と一緒に並ぶ。保存できなかったものだけ、名前と再生期限を残す。
+ const unsaved = r.videos.filter(v => !v.saved);
+ const videos = unsaved.length ? `<ul class="record-videos">${unsaved.map(v => `<li><span class="record-video-name">動画：${escape(v.name)}</span><small>${[v.size, v.expired ? '再生期限切れ' : v.expires ? `再生期限 ${v.expires}` : ''].filter(Boolean).map(escape).join('・')}</small></li>`).join('')}</ul>` : '';
+ // 本文は先に出し、長いものは書き出しだけにして、すぐ下の写真まで目が届くようにする。
+ const long = r.text.length > 120 || r.text.split('\n').length > 3, open = !long || openTexts.has(p.id);
+ const text = r.text ? `<p class="record-body ${open ? '' : 'clamped'}" id="record-text-${escape(p.id)}">${escape(r.text)}</p>${long ? `<button class="text-button record-toggle" data-toggle-text="${escape(p.id)}" aria-expanded="${open}" aria-controls="record-text-${escape(p.id)}">${open ? '本文を閉じる' : '本文をすべて読む'}</button>` : ''}` : '';
+ return `<article class="record ${focusRecord === p.id ? 'focused' : ''}" data-record-id="${escape(p.id)}" tabindex="-1"><div class="record-meta"><span class="pill">${escape(r.kind)}</span><time datetime="${escape(p.date)}">${escape(day(p.date))}</time>${r.author ? `<span class="record-author">${escape(r.author)}</span>` : ''}${named && p.children?.length ? `<span class="record-child">${escape(p.children.join('・'))}</span>` : ''}</div>${r.title ? `<h2>${escape(r.title)}</h2>` : ''}${text}${fields}${items}${media}${files}${videos}</article>`;
 }
 function recordsView() {
  // Names and the filter only appear for siblings; one child's name on every record says nothing.
  const children = recordChildren(), named = children.length > 1;
  if(!named || !children.includes(recordChild)) recordChild = '';
- const posts = state.posts.filter(p => !recordChild || p.children?.includes(recordChild));
+ const posts = state.posts.filter(p => !recordChild || p.children?.includes(recordChild)), media = recordMedia();
  const tab = (id: string, text: string) => `<button class="tab ${recordChild === id ? 'active' : ''}" data-record-child="${escape(id)}" aria-pressed="${recordChild === id}">${escape(text)}</button>`;
- return `<div class="heading compact"><div><h1>園の記録</h1><p class="muted">コドモンの連絡帳・お知らせ・活動記録を、取得した時点の内容で保存しています。</p></div></div>${named ? `<div class="tabs" role="group" aria-label="子どもで絞り込む">${tab('', 'すべて')}${children.map(c => tab(c, c)).join('')}</div>` : ''}${posts.length ? `<div class="records">${posts.map(p => recordView(recordEntry(p), p, named)).join('')}</div>` : empty('まだ記録がありません','同期すると、連絡帳や園からのお知らせがここに表示されます。')}`;
+ return `<div class="heading compact"><div><h1>園の記録</h1><p class="muted">連絡帳・お知らせ・活動記録を、付いていた写真やおたよりと一緒に見られます。</p></div></div>${named ? `<div class="tabs" role="group" aria-label="子どもで絞り込む">${tab('', 'すべて')}${children.map(c => tab(c, c)).join('')}</div>` : ''}${posts.length ? `<div class="records">${posts.map(p => recordView(recordEntry(p), p, named, media.get(p.id) ?? [])).join('')}</div>` : empty('まだ記録がありません','同期すると、連絡帳や園からのお知らせがここに表示されます。')}`;
+}
+/** 写真の記録。写真側に記録がない（共有された写真など）ときは、写真を一覧に持つ記録を使う。 */
+function photoPost(photo: Photo): Post | undefined { return state.posts.find(p => p.id === photo.postId) ?? state.posts.find(p => p.photos?.includes(photo.id)); }
+/** 写真を大きく見る。開いた画面に並ぶ写真（記録から開いたときはその記録の写真）を左右で送れる。 */
+function openPhoto(photo: Photo, group: Photo[] = [], fromPost = '', step = '') {
+ const dialog = document.querySelector<HTMLDialogElement>('#photo-dialog')!;
+ const children = usesSelection() ? presentChildren(photo) : [];
+ // 名前は写真の上の印で分かるので、写っている子どもを説明するだけの文は出さない（一覧と同じ）。
+ const reason = usesSelection() && !(children.length && photo.decision === 'auto') ? reasonText(photo) : '';
+ const at = group.indexOf(photo), prev = at > 0 ? group[at - 1] : undefined, next = at >= 0 && at < group.length - 1 ? group[at + 1] : undefined;
+ const post = photoPost(photo), entry = post && post.id !== fromPost ? recordEntry(post) : null;
+ const excerpt = entry ? recordExcerpt(entry) : '';
+ const record = post && entry ? `<section class="photo-record" aria-label="この写真の園の記録"><div><small>${escape(entry.kind)} · ${escape(day(post.date))}</small>${entry.title ? `<strong>${escape(entry.title)}</strong>` : ''}${excerpt ? `<p>${escape(excerpt)}</p>` : ''}</div><button type="button" class="button" data-goto-record="${escape(post.id)}">この日の園の記録を見る →</button></section>` : '';
+ const pager = group.length > 1 ? `<div class="photo-pager"><button type="button" class="button small" data-step="-1" ${prev ? '' : 'disabled'} aria-label="前の写真">← 前へ</button><span>${at + 1} / ${group.length}</span><button type="button" class="button small" data-step="1" ${next ? '' : 'disabled'} aria-label="次の写真">次へ →</button></div>` : '';
+ dialog.innerHTML = `<form method="dialog"><div class="section-heading"><div><h2 id="photo-title">${escape(photo.title || photo.filename)}</h2><small>${escape(day(photo.date))} · ${escape(photo.filename)}</small></div><button class="button" autofocus>閉じる</button></div><div class="full-photo-frame"><img class="full-photo" src="${photoURL(photo,state.photos.indexOf(photo))}" alt="${escape(photo.title)}">${photoMarks(photo, children)}</div>${pager}${isVideo(photo.filename) ? '<p><button type="button" class="button primary" data-open-video>動画を再生</button></p>' : ''}${reason ? `<p>${escape(reason)}</p>` : ''}${record}</form>`;
+ dialog.querySelector('[data-open-video]')?.addEventListener('click', () => {void run({type:'openVideo', id:photo.id});});
+ dialog.querySelectorAll<HTMLButtonElement>('[data-step]').forEach(b => b.addEventListener('click', () => { const to = Number(b.dataset.step) < 0 ? prev : next; if(to) openPhoto(to, group, fromPost, b.dataset.step); }));
+ // 写真の外（背景）を押したら閉じる。ダイアログの余白は内側なので、枠の外かどうかで見分ける。
+ dialog.onclick = e => { if(e.target !== dialog) return; const r = dialog.getBoundingClientRect(); if(e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) dialog.close(); };
+ dialog.onkeydown = e => { const to = e.key === 'ArrowLeft' ? prev : e.key === 'ArrowRight' ? next : undefined; if(to) { e.preventDefault(); openPhoto(to, group, fromPost, e.key === 'ArrowLeft' ? '-1' : '1'); } };
+ dialog.querySelector<HTMLButtonElement>('[data-goto-record]')?.addEventListener('click', () => { dialog.close(); goToRecord(post!.id); });
+ if(!dialog.open) dialog.showModal();
+ // 送ったあとも同じボタンで続けて送れるように、押したボタン（端なら閉じるボタン）に戻す。
+ else (dialog.querySelector<HTMLButtonElement>(`[data-step="${step}"]:not(:disabled)`) ?? dialog.querySelector<HTMLButtonElement>('[autofocus]'))?.focus();
+}
+function goToRecord(id: string) {
+ page = 'records'; setup = false; recordChild = ''; focusRecord = id; openTexts.add(id); selected.clear(); render();
+ const el = Array.from(app.querySelectorAll<HTMLElement>('[data-record-id]')).find(e => e.dataset.recordId === id);
+ el?.scrollIntoView({block:'start'}); el?.focus({preventScroll:true});
+ focusRecord = '';
 }
 const input = (key: keyof Settings, text: string, value: string | number, type = 'text', hint = '', attrs = '') => `<div class="field"><label for="field-${key}">${text}</label><input id="field-${key}" name="${key}" type="${type}" value="${escape(value)}" ${type === 'number' ? 'step="any" min="0"' : ''} ${hint ? `aria-describedby="hint-${key}"` : ''} ${attrs}>${hint ? `<small id="hint-${key}">${hint}</small>` : ''}</div>`;
 const check = (key: keyof Settings, text: string, on: boolean, hint = '') => `<label class="check setting-check"><input name="${key}" type="checkbox" ${on ? 'checked' : ''}><span>${text}${hint ? `<small>${hint}</small>` : ''}</span></label>`;
@@ -318,13 +372,13 @@ async function confirmDialog(title: string, description: string, confirm: string
 async function act(action: Action, done: string) { const result = await run(action, done); if(result) { selected.clear(); render(); } }
 function bind() {
  app.querySelectorAll<HTMLElement>('[data-preview]').forEach(b => b.addEventListener('click', () => {
-  const photo = state.photos.find(p => p.id === b.dataset.preview)!;
-  const dialog = document.querySelector<HTMLDialogElement>('#photo-dialog')!;
-  const status = state.settings.miteneEnabled || photo.uploadState !== 'pending' ? ` · ${label[photo.uploadState]}` : '';
-  dialog.innerHTML = `<form method="dialog"><div class="section-heading"><div><h2 id="photo-title">${escape(photo.title || photo.filename)}</h2><small>${escape(day(photo.date))} · ${escape(photo.filename)}${status}</small></div><button class="button" autofocus>閉じる</button></div><img class="full-photo" src="${photoURL(photo,state.photos.indexOf(photo))}" alt="${escape(photo.title)}">${isVideo(photo.filename) ? '<p><button type="button" class="button primary" data-open-video>動画を再生</button></p>' : ''}${usesSelection() ? `<p>${escape(reasonText(photo))}</p>` : ''}</form>`;
-  dialog.querySelector('[data-open-video]')?.addEventListener('click', () => {void run({type:'openVideo', id:photo.id});});
-  dialog.showModal();
+  const photo = state.photos.find(p => p.id === b.dataset.preview)!, postId = b.dataset.previewPost ?? '';
+  // 開いた画面に並んでいる順で送る。ホームは最近の写真の続きとして、すべての写真をたどれる。
+  const group = postId ? recordMedia().get(postId) ?? [] : page === 'photos' ? visiblePhotos() : state.photos;
+  openPhoto(photo, group, postId);
  }));
+ app.querySelectorAll<HTMLElement>('[data-toggle-text]').forEach(b => b.addEventListener('click', () => {const id = b.dataset.toggleText!; openTexts.has(id) ? openTexts.delete(id) : openTexts.add(id); render();}));
+ app.querySelectorAll<HTMLElement>('[data-attachment]').forEach(b => b.addEventListener('click', () => {void run({type:'openAttachment', id:b.dataset.attachment!, index:Number(b.dataset.index)});}));
  app.querySelector('.brand')?.addEventListener('click', e => {e.preventDefault(); if(!state.settings.setupComplete) return; page = 'overview'; setup = false; render();});
  app.querySelectorAll<HTMLElement>('[data-page]').forEach(b => b.addEventListener('click', () => { page = b.dataset.page as typeof page; setup = false; if(b.dataset.filter) filter = b.dataset.filter; else if(['older','uncertain','all'].includes(filter)) filter = ''; selected.clear(); render(); window.scrollTo(0,0); }));
  app.querySelectorAll<HTMLElement>('[data-filter]:not([data-page])').forEach(b => b.addEventListener('click', () => {filter = b.dataset.filter!; selected.clear(); render();}));
@@ -370,7 +424,6 @@ function bind() {
  });
  settingsForm?.addEventListener('input', e => {const target = e.target as HTMLInputElement; if(target.type !== 'checkbox' && target.type !== 'radio') scheduleAutosave(false);});
  settingsForm?.addEventListener('change', () => {syncShown(settingsForm); scheduleAutosave(true);});
- app.querySelectorAll<HTMLElement>('[data-post]').forEach(b => b.addEventListener('click', () => {void run({type:'openPost', id:b.dataset.post!});}));
  app.querySelectorAll<HTMLElement>('[data-choose]').forEach(b => b.addEventListener('click', async () => {const form = document.querySelector<HTMLFormElement>('#settings-form')!; const draft = new FormData(form); const result = await run({type:b.dataset.choose as 'chooseFolder' | 'chooseLibrary'}); const current = document.querySelector<HTMLFormElement>('#settings-form'); if(current) restoreForm(current, draft); if(result && 'path' in result && current) { (current.elements.namedItem(b.dataset.choose === 'chooseFolder' ? 'saveRoot' : 'photosLibrary') as HTMLInputElement).value = result.path; if(b.dataset.choose === 'chooseLibrary') current.querySelector('.library-name')!.textContent = libraryName(result.path); scheduleAutosave(true); }}));
  app.querySelector<HTMLFormElement>('#period-form')?.addEventListener('submit', async e => {
   e.preventDefault(); const form = e.currentTarget as HTMLFormElement; const fd = new FormData(form);

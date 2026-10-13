@@ -47,7 +47,11 @@ export interface ArchiveVideo {
   /** 保存した動画のパス。変換前・期限切れで保存できなかったときはない。 */
   path?: string;
 }
-export interface ArchivePost { id: string; date: string; kind: string; title: string; body: string; path: string; attachments: string[]; author?: string; children?: string[]; videos?: ArchiveVideo[]; }
+export interface ArchivePost {
+  id: string; date: string; kind: string; title: string; body: string; path: string; attachments: string[]; author?: string; children?: string[]; videos?: ArchiveVideo[];
+  /** この記録に付いていた写真・動画の id。別の記録と共有された写真も含む。以前の取り込みにはない（写真の `postId` でたどる）。 */
+  photos?: string[];
+}
 export interface SyncResult { photos: ArchivePhoto[]; posts: ArchivePost[]; errors: string[]; }
 export interface FaceResult { filename: string; person: string; selected: boolean; reason: string; }
 export interface Job { id: number; kind: string; startedAt: string; endedAt: string | null; status: 'running' | 'success' | 'error'; message: string; }
@@ -70,7 +74,7 @@ export type Action =
   | { type: 'chooseFolder' }
   | { type: 'chooseLibrary' }
   | { type: 'openArchive' }
-  | { type: 'openPost'; id: string }
+  | { type: 'openAttachment'; id: string; index: number }
   | { type: 'openVideo'; id: string }
   | { type: 'openPrivacy' }
   | { type: 'checkUpdate' }
