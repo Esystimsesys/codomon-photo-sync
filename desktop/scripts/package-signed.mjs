@@ -8,7 +8,7 @@ import config from './signing-config.cjs';
 
 process.umask(0o077);
 const desktop = fileURLToPath(new URL('..', import.meta.url));
-let temporary, keychain, createdKeychain = false;
+let temporary, keychain, createdKeychain = false, searchList;
 let activeChild;
 const secretEnv = { ...process.env };
 const childEnv = { ...process.env };
@@ -57,6 +57,10 @@ try {
   quiet('/usr/bin/security', ['set-keychain-settings', '-t', '3600', keychain], '一時キーチェーンの設定');
   quiet('/usr/bin/security', ['import', p12, '-k', keychain, '-P', password, '-T', '/usr/bin/codesign'], '署名用証明書の読み込み');
   quiet('/usr/bin/security', ['set-key-partition-list', '-S', 'apple-tool:,codesign:', '-s', '-k', keychainPassword, keychain], '署名用のアクセス設定');
+  // codesign on macOS 15 only finds the identity when its keychain is on the search list, even with --keychain.
+  const current = quiet('/usr/bin/security', ['list-keychains', '-d', 'user'], 'キーチェーンの一覧の取得').split('\n').map(line => line.trim().replace(/^"|"$/g, '')).filter(Boolean);
+  quiet('/usr/bin/security', ['list-keychains', '-d', 'user', '-s', keychain, ...current], '一時キーチェーンの登録');
+  searchList = current;
   // Remove the exported key before dependency/build code is executed.
   await rm(p12); await rm(passwordFile);
   delete secretEnv.OMUKAE_SIGN_P12_BASE64; delete secretEnv.OMUKAE_SIGN_PASSWORD;
@@ -67,6 +71,10 @@ try {
   console.error(error.code === 'ENOENT' ? '署名用の控えが見つかりません。新しい証明書を作らず、既存の控えを復元してください' : error.message);
   process.exitCode = 1;
 } finally {
+  if (searchList) {
+    const result = spawnSync('/usr/bin/security', ['list-keychains', '-d', 'user', '-s', ...searchList], { stdio: 'pipe' });
+    if (result.status !== 0) { console.error('キーチェーンの一覧を元に戻せませんでした'); process.exitCode = 1; }
+  }
   if (createdKeychain) {
     const result = spawnSync('/usr/bin/security', ['delete-keychain', keychain], { stdio: 'pipe' });
     if (result.status !== 0) { console.error('一時キーチェーンを削除できませんでした'); process.exitCode = 1; }
