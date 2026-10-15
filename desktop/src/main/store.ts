@@ -170,13 +170,20 @@ export class Store {
     }
   }
   decide(ids: string[], decision: Decision): void { if (!['auto','include','exclude'].includes(decision)) throw new Error('選別の指定が不正です'); this.transaction(()=>{ for (const id of ids) this.db.prepare('UPDATE photos SET decision=? WHERE id=?').run(decision,id); }); }
-  /** A photo is a candidate when any registered child is judged to be in it. */
-  applyFaces(faces: FaceResult[]): void {
+  /**
+   * A photo is a candidate when any registered child is judged to be in it. With `analyzed`, a photo Photos has not
+   * analyzed yet (or not imported) stays "waiting" instead of being reported as not showing the child.
+   */
+  applyFaces(faces: FaceResult[], analyzed?: Iterable<string> | null): void {
     const byFile = new Map<string, FaceResult[]>();
     for (const f of faces) byFile.set(f.filename, [...(byFile.get(f.filename) || []), f]);
     const several = this.settings().people.length > 1;
     this.transaction(()=>{
       this.db.prepare("UPDATE photos SET autoSelected=0,reason='対象の人物が見つかりません'").run();
+      if (analyzed) {
+        const done = new Set(analyzed), waiting = this.db.prepare("UPDATE photos SET reason='顔認識の結果待ち' WHERE filename=?");
+        for (const row of this.db.prepare('SELECT DISTINCT filename FROM photos').all()) if (!done.has(String(row.filename))) waiting.run(row.filename);
+      }
       for (const [filename, found] of byFile) {
         const selected = found.filter(f => f.selected);
         const reason = !several ? found[0].reason || '顔認識で候補になりました'

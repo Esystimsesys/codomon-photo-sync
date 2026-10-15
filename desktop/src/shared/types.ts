@@ -54,6 +54,11 @@ export interface ArchivePost {
 }
 export interface SyncResult { photos: ArchivePhoto[]; posts: ArchivePost[]; errors: string[]; }
 export interface FaceResult { filename: string; person: string; selected: boolean; reason: string; }
+export interface FaceAnalysis {
+  faces: FaceResult[];
+  /** 「写真」アプリが顔の解析を終えた、取り込み先のアルバムのファイル名。解析の状態を読めないライブラリでは null。 */
+  analyzed: string[] | null;
+}
 export interface Job { id: number; kind: string; startedAt: string; endedAt: string | null; status: 'running' | 'success' | 'error'; message: string; }
 export interface Snapshot {
   settings: Settings; photos: Photo[]; posts: ArchivePost[]; jobs: Job[];

@@ -101,7 +101,7 @@ test('manual selection persists when switching tabs', async ({page}) => {
  await expect(page.locator('.photo-card').nth(1).locator('.photo-children li')).toHaveText(['さくら','はると']);
  await page.locator('[data-decision][data-value="exclude"]').first().click();
  await expect(page.locator('.photo-card')).toHaveCount(2);
- await page.getByRole('button', {name:/^未選択/}).click();
+ await page.getByRole('button', {name:/^送らない/}).click();
  await expect(page.locator('.photo-card')).toHaveCount(4);
  await expect(page.locator('[data-decision][data-value="auto"]')).toHaveCount(2);
 });
@@ -155,8 +155,8 @@ test('automatic sending leaves earlier photos for review from home', async ({pag
  await expect(page.getByRole('heading', {name:/^みてね自動送信設定前の写真/})).toBeVisible();
  await expect(page.locator('.photo-card')).toHaveCount(3);
  await page.getByRole('button', {name:'← 写真一覧に戻る',exact:true}).click();
- await expect(page.getByRole('button', {name:'送信済み・送らない（1枚）',exact:true})).toHaveAttribute('aria-pressed','true');
- await expect(page.getByRole('button', {name:'送信待ち（0枚）',exact:true})).toBeVisible();
+ await expect(page.getByRole('button', {name:'送信待ち（0枚）',exact:true})).toHaveAttribute('aria-pressed','true');
+ await expect(page.getByRole('button', {name:'送信済み（1枚）',exact:true})).toBeVisible();
 });
 test('narrow layout stays within viewport and navigation works', async ({page}) => {
  await page.setViewportSize({width: 390,height:844}); await page.goto('/');
@@ -294,7 +294,7 @@ test('turning off sharing keeps the active candidate tab and photos consistent',
  await expect(page.getByRole('radio', {name:/確認してから送る/})).toBeHidden();
  await expect(page.locator('#settings-save-state')).toHaveText('設定は保存済みです');
  await page.getByRole('button', {name:'写真',exact:true}).click();
- await expect(page.getByRole('button', {name:'まとめる写真（3枚）',exact:true})).toHaveAttribute('aria-pressed','true');
+ await expect(page.getByRole('button', {name:'アルバムに入れる（3枚）',exact:true})).toHaveAttribute('aria-pressed','true');
  await expect(page.locator('.photo-card')).toHaveCount(3);
 });
 test('storage-only mode uses the new name and keeps all photos inspectable', async ({page}, testInfo) => {
@@ -341,4 +341,17 @@ test('newly added time rows can be removed and invalid drafts survive navigation
  await page.locator('[data-remove-time="sync"]').last().click();
  await expect(page.locator('[data-time-list="sync"] input')).toHaveCount(1);
  await expect(page.locator('#settings-save-state')).toHaveText('設定は保存済みです');
+});
+test('photo tabs group by state: to send, not sent, and sent, each with a note on what it holds', async ({page}) => {
+ await page.goto('/'); await page.getByRole('button', {name:'写真', exact:true}).click();
+ const tabs = page.getByRole('group', {name:'写真の絞り込み'}).getByRole('button');
+ await expect(tabs).toHaveText([/^送る候補/, /^送らない/, /^送信済み/]);
+ await expect(page.locator('.tab-note')).toHaveText(/チェックして、みてねに送ります/);
+ await expect(page.locator('.photo-card .decision .chosen').first()).toHaveText('✓ 送る');
+ await page.getByRole('button', {name:/^送らない/}).click();
+ await expect(page.locator('.tab-note')).toHaveText(/みてねに送らない写真です/);
+ await expect(page.locator('.photo-card .decision .not-chosen').first()).toHaveText('送らない');
+ await page.getByRole('button', {name:/^送信済み/}).click();
+ await expect(page.locator('.photo-card')).toHaveCount(1);
+ await expect(page.locator('.photo-card .photo-status')).toHaveText('送信済み');
 });
