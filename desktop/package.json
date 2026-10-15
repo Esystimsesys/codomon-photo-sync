@@ -1,6 +1,6 @@
 {
   "name": "codomon-photo-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "コドモンの写真と記録をMacに保存し、みてねへ送るツール",
   "author": "codomon-photo-sync contributors",
