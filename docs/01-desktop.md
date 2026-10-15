@@ -4,7 +4,7 @@
 
 ## 署名
 
-Developer IDによる署名・Appleの公証は行わない。アプリ全体はアドホック署名する。署名がないと、ダウンロード後に「壊れているため開けません」と表示され、「プライバシーとセキュリティ」から許可することもできないため。Mac全体のGatekeeperを無効化する手順は案内しない。[Appleの説明](https://support.apple.com/ja-jp/102445)
+Developer IDによる署名・Appleの公証は行わない。配布版は毎回同じ自作の証明書で署名し、「写真」アプリの操作と写真ライブラリの許可を更新後も引き継ぐ。キーチェーンの確認は、Team IDがないため更新ごとに出る（理由は[版番号とリリース](02-release.md)）。通常のテストはアドホック署名にする。署名がないとダウンロード後に「壊れているため開けません」と表示されるため、どちらもアプリ全体の署名を検証する。Mac全体のGatekeeperを無効化する手順は案内しない。署名用の鍵と手順は[版番号とリリース](02-release.md)を参照。
 
 ## 仕様の補足
 
@@ -44,11 +44,11 @@ npm start
 ## 配布ファイル
 
 ```bash
-npm run package:mac
+npm run package:signed
 ```
 
 `desktop/release/`へDMGとZIPが生成される。Playwright用ブラウザを同梱するためサイズは大きめ。
 
 `.github/workflows/desktop.yml`はApple SiliconとIntelの各Macランナーで試験・パッケージを作る。`v0.1.1`のようなタグを push すると、両方のDMG・ZIPを添付した下書きのGitHub Releaseまで作る。公開は下書きを確認してから手で行う。版番号の付け方と手順は[版番号とリリース](02-release.md)を参照。
 
-署名・公証、完全自動更新、Windows版、iPhone管理は初版に含めない。更新ボタンはGitHub Releasesの新しい版を確認し、ダウンロードページへ案内する。
+Appleの公証、完全自動更新、Windows版、iPhone管理は初版に含めない。更新ボタンはGitHub Releasesの新しい版を確認し、ダウンロードページへ案内する。

@@ -40,26 +40,78 @@ jobs:
       - run: npm run test:ui
       - run: npm run test:native
       - run: npm run package:mac
+        if: "!startsWith(github.ref, 'refs/tags/v')"
       # An unsealed bundle opens fine here but shows as "damaged" once downloaded, so check the signature explicitly.
       - name: Verify the app signature
+        if: "!startsWith(github.ref, 'refs/tags/v')"
         run: codesign --verify --deep --strict --verbose=2 "$(find release -maxdepth 2 -name 'おむかえフォト.app' -print -quit)"
       - name: Smoke test the packaged app
+        if: "!startsWith(github.ref, 'refs/tags/v')"
         run: |
           packaged_app=$(find release -path '*/Contents/MacOS/おむかえフォト' -type f -print -quit)
           CODOMON_PACKAGED_EXECUTABLE="$PWD/$packaged_app" node scripts/smoke-electron.mjs
       # Intel builds are only verified here, so check the arch-specific bundled browser too.
       - name: Smoke test the bundled browser
+        if: "!startsWith(github.ref, 'refs/tags/v')"
         run: node scripts/smoke-browser.mjs "$(find release -maxdepth 2 -name 'おむかえフォト.app' -print -quit)"
       - uses: actions/upload-artifact@v4
+        if: "!startsWith(github.ref, 'refs/tags/v')"
         with:
           name: mac-${{ matrix.os }}
           path: |
             desktop/release/*.dmg
             desktop/release/*.zip
           retention-days: 14
+  # Only tagged releases can access the stable signing identity. PR checks have no environment secrets.
+  signed_mac:
+    timeout-minutes: 40
+    needs: mac
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+      - run: npm run browser:install
+      - name: Build with the stable signing certificate
+        id: package
+        env:
+          OMUKAE_SIGN_P12_BASE64: ${{ secrets.OMUKAE_SIGN_P12_BASE64 }}
+          OMUKAE_SIGN_PASSWORD: ${{ secrets.OMUKAE_SIGN_PASSWORD }}
+        run: npm run package:signed
+      - name: Remove the temporary signing keychain
+        if: always() && (steps.package.outcome == 'success' || steps.package.outcome == 'failure' || steps.package.outcome == 'cancelled')
+        run: node scripts/cleanup-signing.mjs
+      - name: Verify the pinned release signature
+        run: node scripts/verify-signature.mjs "$(find release -maxdepth 2 -name 'おむかえフォト.app' -print -quit)"
+      - name: Smoke test the signed app
+        run: |
+          packaged_app=$(find release -path '*/Contents/MacOS/おむかえフォト' -type f -print -quit)
+          CODOMON_PACKAGED_EXECUTABLE="$PWD/$packaged_app" node scripts/smoke-electron.mjs
+      - name: Smoke test the signed bundled browser
+        run: node scripts/smoke-browser.mjs "$(find release -maxdepth 2 -name 'おむかえフォト.app' -print -quit)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-mac-${{ matrix.os }}
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.zip
+          retention-days: 14
   # A tag push only drafts the release. Publishing stays a manual step after checking the DMG.
   release:
-    needs: mac
+    needs: signed_mac
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -71,7 +123,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: mac-*
+          pattern: signed-mac-*
           merge-multiple: true
       - name: Draft the GitHub Release
         run: |

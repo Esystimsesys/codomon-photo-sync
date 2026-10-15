@@ -39,12 +39,12 @@
 
 ## 使う人のアプリが新しくなるまで
 
-自動では入れ替わりません。署名・公証をしていない Mac アプリは、Electron の自動アップデートの仕組みを使えないためです（[Electron: Updating Applications](https://www.electronjs.org/docs/latest/tutorial/updates)）。
+アプリの入れ替えは手動です。配布版は同じ自作の証明書で署名しますが、Apple の公証は受けておらず、このプロジェクトでは自動入れ替えを実装していません。
 
 1. アプリは起動して30秒後と、その後1日ごとに、公開済みの最新の Release と自分の版番号を比べる。設定の「アップデートを確認」でもすぐに確かめられる。下書きと試験版は対象外
 2. 新しい版があれば、ホーム画面に案内と「ダウンロードページを開く」が出る。Mac の通知も、版ごとに1回だけ出す
 3. 使う人が DMG をダウンロードし、アプリを「アプリケーション」フォルダで置き換える。保存した写真・記録・設定・送信履歴はそのまま引き継がれる
-4. 必要なら「フルディスクアクセス」やMacの「写真」アプリの操作許可をやり直す
+4. 起動の許可と、キーチェーンの「常に許可」をやり直す。「写真」アプリの操作と写真ライブラリの許可は、同じ証明書で署名しているため引き継がれる
 
 ## 番号をそろえる場所
 
@@ -58,7 +58,7 @@
 
 ## 手順
 
-ビルドは手元ではなく GitHub Actions で作ります。タグを付けたコミットの中身だけから、Apple Silicon 版と Intel 版の両方を作るためです。
+通常の配布ビルドは GitHub Actions で作ります。タグを付けたコミットの中身だけから、Apple Silicon 版と Intel 版の両方を作るためです。手元でも同じ証明書を使ってビルドできます。
 
 1. `desktop/package.json` の `version` を上げ、`main` にコミットして push する
 2. そのコミットにタグを付けて push する
@@ -68,9 +68,40 @@
    git push origin v0.1.1
    ```
 
-3. `.github/workflows/desktop.yml` が試験とビルドを行い、DMG・ZIP を添付した**下書きの Release** を作る。タグと `package.json` の版番号が違うときは止まる
+3. `.github/workflows/desktop.yml` が試験と署名付きビルドを行い、DMG・ZIP を添付した**下書きの Release** を作る。タグと `package.json` の版番号が違うとき、署名用の鍵がないとき、証明書が一致しないときは止まる
 4. 下書きから DMG をダウンロードして自分の Mac で起動を確かめ、説明文を書く
 5. 「Publish release」で公開する。公開して初めて、アプリのアップデート確認に表示される
+
+### 署名用の証明書（初回だけ）
+
+「写真」アプリの操作と写真ライブラリの許可を更新後も引き継ぐため、自作のコード署名証明書を使います。macOS はこれらの許可を、アプリの指定要件（アプリIDと証明書）で覚えます（[Apple TN2206](https://developer.apple.com/library/archive/technotes/tn2206/_index.html)）。アドホック署名では指定要件がビルドごとに変わるため、更新のたびに許可が外れます。
+
+キーチェーンの確認は、この方法では避けられません。キーチェーンの項目は作成したアプリのパーティションIDを記録し、Team IDのない署名ではビルドごとに変わる `cdhash:` になるためです。Developer ID（Apple Developer Program）で署名すれば `teamid:` になり、確認は出なくなります。2026-10-15 に 0.1.0 から 0.1.1-test.1 へ入れ替えて、キーチェーンの確認が出ること、「写真」関係の許可が引き継がれることを実機で確かめました。
+
+初回の起動を許可する手順は、Apple の公証を受けていないため、新しい版をダウンロードするたびに必要です。
+
+- 公開証明書は `desktop/build/signing-certificate.pem`。秘密鍵は入っていないのでリポジトリに含める
+- 暗号化した秘密鍵は `~/Library/Application Support/omukae-photo-signing/identity.p12`、パスワードは同じフォルダの `password.txt`。フォルダは本人のみ読み書きできる。両方をパスワード管理アプリ等とオフラインの控えに保存する。秘密鍵・パスワードをリポジトリ、会話、ビルド成果物へ入れない
+- `npm run signing:create` は証明書がまだない場合だけ使う。既存の証明書や保存先があると停止する。別のMacでは作り直さず、控えを復元する
+- GitHub の `release` 環境に `OMUKAE_SIGN_P12_BASE64`（`identity.p12` のBase64）と `OMUKAE_SIGN_PASSWORD`（`password.txt` の内容）を登録する。登録・変更はユーザーの許可を得て行う
+- `release` 環境の Deployment branches and tags は Selected branches and tags にし、種類を Tag、名前を `v*` にする。ブランチは許可しない。[GitHub の環境保護](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)で、署名用シークレットを配布用タグに限定する
+- プルリクエストと通常の手動実行は鍵を使わず、アドホック署名で試験する。タグのpushでは試験成功後、`release` 環境の専用ジョブで署名する
+- 配布用タグのpushを署名実行の承認として扱い、`release` 環境に署名前の追加承認（Required reviewers）は設定しない（2026-10-14 ユーザー指定）
+- 署名時だけ一時キーチェーンを作り、署名後に削除する。ビルドの子プロセスにはP12やそのパスワードの環境変数を渡さない。システムの信頼設定は変更しない
+- 署名後、アプリIDと証明書が公開証明書に一致することを検証する。異なる鍵やアドホック署名の成果物は配布に進めない
+
+証明書や鍵を作り直すと、利用者に「写真」関係の許可がもう一度必要になります。自己署名の証明書は失効サービスがないため、紛失・漏洩時は新しい証明書へ切り替えて更新を案内します。
+
+### 手元で署名付きビルドを作る
+
+```bash
+cd desktop
+npm run package:signed
+```
+
+証明書の控えは上記の保存先から読みます。別の場所へ復元した場合は `OMUKAE_SIGNING_DIR` にそのフォルダを指定します。DMGが不要な試験では `npm run package:signed:dir` を使います。インストール済みアプリや利用者のキーチェーンのログイン情報は変更しません。
+
+この方法で作るのは実行したMac用の版です。Intel版はGitHub ActionsのIntelランナーで作り、実機での起動試験まで行います。
 
 ### Intel 版
 
