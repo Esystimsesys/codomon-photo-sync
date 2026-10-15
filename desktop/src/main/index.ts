@@ -116,7 +116,7 @@ async function action(raw:unknown):Promise<unknown>{
     case 'openArchive':{mkdirSync(store.settings().saveRoot,{recursive:true,mode:0o700});const error=await shell.openPath(store.settings().saveRoot);if(error)throw new Error('保存先を開けませんでした');break;}
     case 'openAttachment':{const file=await attachmentPath(a.id,a.index);if(!file)throw new Error('添付ファイルが見つかりません');const err=await shell.openPath(file);if(err)throw new Error('添付ファイルを開けませんでした');break;}
     case 'openVideo':{const photo=store.photo(a.id);if(!photo||!isVideo(photo.filename)||!await archivePathAllowed(photo.path,store.settings().saveRoot))throw new Error('動画が見つかりません');const err=await shell.openPath(photo.path);if(err)throw new Error('動画を開けませんでした');break;}
-    case 'openPrivacy':await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles');break;
+    case 'openPrivacy':await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Photos');break;
     case 'checkUpdate':await checkUpdate(true);break;
     case 'openUpdate':if(service.update)await shell.openExternal(service.update.url);break;
     case 'exportTransfer':{
