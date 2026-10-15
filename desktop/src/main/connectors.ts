@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { gunzipSync } from 'node:zlib';
 import piexif from 'piexifjs';
-import type { ArchivePhoto, ArchivePost, ArchiveVideo, SyncResult, FaceResult, Person, Settings } from '../shared/types';
+import type { ArchivePhoto, ArchivePost, ArchiveVideo, SyncResult, FaceAnalysis, FaceResult, Person, Settings } from '../shared/types';
 import { personAlbum } from './store';
 import { isVideo } from '../shared/media';
 
@@ -504,19 +504,33 @@ export function judgeFace(px: number, ratio: number, people: number, s: Pick<Set
   return px < s.faceMinPx ? `顔が小さめです（${px.toFixed(0)}px・${people}人）` : `ほかの人が大きく写っています（比率 ${ratio.toFixed(2)}）`;
 }
 function identifier(value: string): string { return `"${value.replaceAll('"', '""')}"`; }
-export function readFaceResults(db: DatabaseSync, settings: Settings): FaceResult[] {
-  if (!settings.people.length) return [];
-  const pk = db.prepare('SELECT Z_PK FROM ZGENERICALBUM WHERE ZTITLE = ? AND ZTRASHEDSTATE = 0 ORDER BY ZCACHEDCOUNT DESC LIMIT 1').get(settings.album)?.Z_PK;
-  if (!pk) return [];
-  let join: { table: string; album: string; asset: string } | undefined;
+/** The album's row and the join table linking albums to assets; the table name varies between library versions. */
+function albumAssets(db: DatabaseSync, album: string): { pk: number; table: string; album: string; asset: string } | null {
+  const pk = Number(db.prepare('SELECT Z_PK FROM ZGENERICALBUM WHERE ZTITLE = ? AND ZTRASHEDSTATE = 0 ORDER BY ZCACHEDCOUNT DESC LIMIT 1').get(album)?.Z_PK ?? 0);
+  if (!pk) return null;
   for (const row of db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'Z_[0-9]*ASSETS' ORDER BY name").all()) {
     const table = String(row.name);
     const cols = db.prepare(`PRAGMA table_info(${identifier(table)})`).all().map(c => String(c.name));
-    const album = cols.find(c => c.endsWith('ALBUMS')), asset = cols.find(c => c.endsWith('ASSETS') && !c.startsWith('Z_FOK_'));
-    if (album && asset) { join = { table, album, asset }; break; }
+    const albumColumn = cols.find(c => c.endsWith('ALBUMS')), asset = cols.find(c => c.endsWith('ASSETS') && !c.startsWith('Z_FOK_'));
+    if (albumColumn && asset) return { pk, table, album: albumColumn, asset };
   }
-  if (!join) throw new Error('この写真ライブラリの形式には対応していません。写真は手動で選択してください');
-  const rows = db.prepare(`SELECT f.ZASSETFORFACE asset, aa.ZORIGINALFILENAME name, p.ZFULLNAME person, f.ZSIZE size, f.ZSOURCEWIDTH width FROM ZDETECTEDFACE f JOIN ${identifier(join.table)} a ON a.${identifier(join.asset)}=f.ZASSETFORFACE JOIN ZADDITIONALASSETATTRIBUTES aa ON aa.ZASSET=f.ZASSETFORFACE LEFT JOIN ZPERSON p ON p.Z_PK=f.ZPERSONFORFACE WHERE a.${identifier(join.album)}=?`).all(pk);
+  throw new Error('この写真ライブラリの形式には対応していません。写真は手動で選択してください');
+}
+/**
+ * Files in the album that Photos has run face analysis on (ZFACEANALYSISVERSION > 0). Until then a missing child means
+ * "not analyzed yet", not "not in the photo". Null when this library has no such column.
+ */
+export function readAnalyzedFilenames(db: DatabaseSync, settings: Settings): string[] | null {
+  if (!db.prepare('PRAGMA table_info(ZADDITIONALASSETATTRIBUTES)').all().some(c => c.name === 'ZFACEANALYSISVERSION')) return null;
+  const join = albumAssets(db, settings.album);
+  if (!join) return [];
+  return db.prepare(`SELECT aa.ZORIGINALFILENAME name FROM ${identifier(join.table)} a JOIN ZADDITIONALASSETATTRIBUTES aa ON aa.ZASSET=a.${identifier(join.asset)} WHERE a.${identifier(join.album)}=? AND aa.ZFACEANALYSISVERSION > 0`).all(join.pk).map(r => String(r.name));
+}
+export function readFaceResults(db: DatabaseSync, settings: Settings): FaceResult[] {
+  if (!settings.people.length) return [];
+  const join = albumAssets(db, settings.album);
+  if (!join) return [];
+  const rows = db.prepare(`SELECT f.ZASSETFORFACE asset, aa.ZORIGINALFILENAME name, p.ZFULLNAME person, f.ZSIZE size, f.ZSOURCEWIDTH width FROM ZDETECTEDFACE f JOIN ${identifier(join.table)} a ON a.${identifier(join.asset)}=f.ZASSETFORFACE JOIN ZADDITIONALASSETATTRIBUTES aa ON aa.ZASSET=f.ZASSETFORFACE LEFT JOIN ZPERSON p ON p.Z_PK=f.ZPERSONFORFACE WHERE a.${identifier(join.album)}=?`).all(join.pk);
   const groups = new Map<string, typeof rows>();
   for (const r of rows) { const key = String(r.asset); groups.set(key, [...(groups.get(key) || []), r]); }
   const out: FaceResult[] = [];
@@ -532,11 +546,11 @@ export function readFaceResults(db: DatabaseSync, settings: Settings): FaceResul
   }
   return out;
 }
-export async function analyzePhotos(settings: Settings): Promise<FaceResult[]> {
+export async function analyzePhotos(settings: Settings): Promise<FaceAnalysis> {
   if (process.platform !== 'darwin') throw new Error('Macの「写真」アプリの顔認識はMacのみ対応しています');
   const filename = settings.photosLibrary.endsWith('.sqlite') ? settings.photosLibrary : path.join(settings.photosLibrary, 'database', 'Photos.sqlite');
   let db: DatabaseSync | undefined;
-  try { db = new DatabaseSync(filename, { readOnly: true }); db.exec('PRAGMA busy_timeout=30000'); return readFaceResults(db, settings); }
+  try { db = new DatabaseSync(filename, { readOnly: true }); db.exec('PRAGMA busy_timeout=30000'); return { faces: readFaceResults(db, settings), analyzed: readAnalyzedFilenames(db, settings) }; }
   catch { throw new Error('写真ライブラリを読めません。設定の「許可の設定を開く」から、写真ライブラリへのフルアクセスを許可してください。ライブラリの場所も確認してください'); }
   finally { db?.close(); }
 }

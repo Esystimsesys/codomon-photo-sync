@@ -5,9 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Service, dayNow, type Connections, type Vault } from '../src/main/service';
 import { Store } from '../src/main/store';
-import type { ArchivePhoto, Settings, SyncResult } from '../src/shared/types';
+import type { ArchivePhoto, FaceResult, Settings, SyncResult } from '../src/shared/types';
 import type { Session } from '../src/main/connectors';
 const session: Session = { cookies: [], origins: [] };
+/** Face results from a library that does not report analysis progress. */
+const analysis = (faces: FaceResult[]) => ({ faces, analyzed: null });
 async function fixture(overrides: Partial<Settings> = {}) {
   const root = await mkdtemp(join(tmpdir(), 'codomon-service-review-'));
   const store = new Store(join(root, 'state.sqlite'));
@@ -26,7 +28,7 @@ async function fixture(overrides: Partial<Settings> = {}) {
     manualLogin: async () => session,
     syncCodmon: async () => ({ photos: [], posts: [], errors: [] }),
     importIntoPhotos: async (_s, photos) => ({ imported: photos.map(p => p.id), errors: {} }),
-    analyzePhotos: async () => files.map(p => ({ filename: p.filename, person: '対象', selected: true, reason: '' })),
+    analyzePhotos: async () => analysis(files.map(p => ({ filename: p.filename, person: '対象', selected: true, reason: '' }))),
     uploadMitene: async (_s, _session, photos, callback) => {
       uploads.push(photos.map(p => p.id)); callback.beforeSend(photos.map(p => p.id)); callback.onSent(photos.map(p => p.id));
     },
@@ -105,7 +107,7 @@ test('changing the Photos destination reimports existing photos without reopenin
       };
       f.connections.analyzePhotos = async () => {
         assert.equal(imports.length, 1, 'existing photos must be checked in the new destination before face analysis');
-        return f.files.map(p=>({filename:p.filename,person:'対象',selected:true,reason:''}));
+        return analysis(f.files.map(p=>({filename:p.filename,person:'対象',selected:true,reason:''})));
       };
       await f.service.analyze();
       assert.deepEqual(imports, [f.files.map(p=>p.id)]);
@@ -233,11 +235,11 @@ test('siblings: a photo is a candidate when either child is in it, and each chil
   const albums: Record<string, string[]> = {};
   try {
     f.connections.updatePersonAlbum = async (_s, person, photos) => { albums[person.name] = photos.map(p => p.id); };
-    f.connections.analyzePhotos = async () => [
+    f.connections.analyzePhotos = async () => analysis([
       { filename: 'first.jpeg', person: '上の子', selected: true, reason: '' },
       { filename: 'second.jpeg', person: '上の子', selected: false, reason: '顔が小さめです（20px・6人）' },
       { filename: 'second.jpeg', person: '下の子', selected: true, reason: '' },
-    ];
+    ]);
     // third.jpeg shows neither child: including it sends it, but it joins no child's album.
     f.store.decide(['second.jpeg', 'third.jpeg'], 'include');
     await f.service.analyze();
@@ -252,7 +254,7 @@ test('per-photo acquisition/import warnings still send other valid selected phot
   try {
     f.connections.syncCodmon = async (): Promise<SyncResult> => ({ photos: [], posts: [], errors: ['一枚取得失敗'] });
     f.connections.importIntoPhotos = async () => ({ imported: ['first.jpeg'], errors: { 'second.jpeg': 'Photos rejected' } });
-    f.connections.analyzePhotos = async () => [{ filename: 'first.jpeg', person: '対象', selected: true, reason: '' }];
+    f.connections.analyzePhotos = async () => analysis([{ filename: 'first.jpeg', person: '対象', selected: true, reason: '' }]);
     await assert.rejects(f.service.sync('2026-01-01', '2026-01-02'), /一部に問題/);
     assert.deepEqual(f.uploads, [['first.jpeg']]);
     assert.equal(f.store.photo('first.jpeg')?.uploadState, 'sent');
@@ -348,7 +350,7 @@ test('face history distinguishes unchanged selection from added and removed phot
     await f.service.analyze();
     assert.match(f.store.jobs()[0].message,/変更はありません/);
     f.store.decide(['second.jpeg'],'include');
-    f.connections.analyzePhotos=async()=>[];
+    f.connections.analyzePhotos=async()=>analysis([]);
     await f.service.analyze();
     assert.match(f.store.jobs()[0].message,/追加0枚・解除2枚/);
     assert.equal(f.store.photo('second.jpeg')?.decision,'include');
@@ -363,7 +365,7 @@ test('videos are chosen by face and sent like photos, except those longer than m
       videos.push({ id, filename: id, path, date: dayNow(), title: '合成試験', postId: 'synthetic' });
     }
     f.store.ingest(videos, []);
-    f.connections.analyzePhotos = async () => [...f.files, ...videos].map(p => ({ filename: p.filename, person: '対象', selected: true, reason: '' }));
+    f.connections.analyzePhotos = async () => analysis([...f.files, ...videos].map(p => ({ filename: p.filename, person: '対象', selected: true, reason: '' })));
     f.connections.videoSeconds = async path => path.endsWith('long-2.mp4') ? 900 : 123.5;
     await f.service.analyze();
     assert.deepEqual(f.uploads, [['first.jpeg', 'long-2.mp4', 'second.jpeg', 'short-1.mp4', 'third.jpeg'].filter(id => id !== 'long-2.mp4')]);

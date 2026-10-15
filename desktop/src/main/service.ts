@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ArchivePhoto, Person, Photo, Settings, Snapshot, SyncResult, FaceResult } from '../shared/types';
+import type { ArchivePhoto, Person, Photo, Settings, Snapshot, SyncResult, FaceAnalysis, FaceResult } from '../shared/types';
 import { Store, archivePathAllowed, validDay, chosen } from './store';
 import type { Session, ConnectorOptions } from './connectors';
 import { beforeAutoSend } from '../shared/send';
@@ -10,7 +10,7 @@ export interface Connections {
   manualLogin(provider:'codmon'|'mitene',options:ConnectorOptions):Promise<Session>;
   syncCodmon(settings:Settings,session:Session,start:string,end:string,options:ConnectorOptions):Promise<SyncResult>;
   importIntoPhotos(settings:Settings,photos:ArchivePhoto[]):Promise<{imported:string[];errors:Record<string,string>}>;
-  analyzePhotos(settings:Settings):Promise<FaceResult[]>;
+  analyzePhotos(settings:Settings):Promise<FaceAnalysis>;
   uploadMitene(settings:Settings,session:Session,photos:ArchivePhoto[],callbacks:{beforeSend:(ids:string[])=>void;onSent:(ids:string[])=>void},options:ConnectorOptions):Promise<void>;
   refreshMiteneSession?: (session:Session,options:ConnectorOptions)=>Promise<Session>;
   updatePersonAlbum?: (settings:Settings,person:Person,photos:ArchivePhoto[])=>Promise<void>;
@@ -116,7 +116,7 @@ export class Service {
       const pending=this.store.photos().filter(p=>!p.imported);
       if(pending.length){this.setProgress('Macの「写真」アプリに取り込んでいます');const result=await this.connectors.importIntoPhotos(s,pending);this.store.markImported(result.imported,result.errors);if(Object.keys(result.errors).length)errors.push(`${Object.keys(result.errors).length}枚は、「写真」アプリに取り込めたか確認できませんでした`);}
     }
-    if(s.people.length){this.setProgress('Macの「写真」アプリの顔認識の結果を読み込んでいます');const faces=await this.connectors.analyzePhotos(s);this.store.applyFaces(faces);
+    if(s.people.length){this.setProgress('Macの「写真」アプリの顔認識の結果を読み込んでいます');const {faces,analyzed}=await this.connectors.analyzePhotos(s);this.store.applyFaces(faces,analyzed);
       if(s.importPhotos&&this.connectors.updatePersonAlbum){const photos=this.store.photos().filter(p=>p.imported);for(const person of s.people){try{await this.connectors.updatePersonAlbum(s,person,personPhotos(photos,faces,person,s.people.length));}catch(e){errors.push(s.people.length>1?`${person.name}のアルバム：${safeError(e)}`:safeError(e));}}}
     }
     if(s.miteneEnabled&&this.vault.has('mitene')&&this.connectors.refreshMiteneSession&&this.store.get<string>('miteneRefresh')!==dayNow()){

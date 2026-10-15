@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import piexif from 'piexifjs';
-import { normalizeDate, monthlyIntervals, entryDate, postedDate, timelinePhotos, recordBody, photoFilename, codmonUrl, stampExif, atomicWrite, fetchTimeline, readFaceResults, judgeFace, confirmedUploadCount, appleScriptString, syncCodmonRequest } from '../src/main/connectors';
+import { normalizeDate, monthlyIntervals, entryDate, postedDate, timelinePhotos, recordBody, photoFilename, codmonUrl, stampExif, atomicWrite, fetchTimeline, readFaceResults, readAnalyzedFilenames, judgeFace, confirmedUploadCount, appleScriptString, syncCodmonRequest } from '../src/main/connectors';
 import type { Settings } from '../src/shared/types';
 const settings = { album:'園',people:[{name:'対象',album:''}],faceMinPx:25,faceMinRatio:0.6,faceMainRatio:0.8,faceMaxPeople:5 } as unknown as Settings;
 
@@ -91,6 +91,11 @@ test('live read-only Photos DB sees WAL, discovers join version and ignores tras
       // Siblings are judged one by one against the same photo.
       rows = readFaceResults(reader,{...settings,people:[{name:'対象',album:''},{name:'ほか',album:''}]});
       assert.deepEqual(rows.map(r=>[r.filename,r.person,r.selected]),[['portrait.jpeg','対象',true],['portrait.jpeg','ほか',true]]);
+      // 顔の解析の状態を持たない古いライブラリでは、解析済みかどうかは分からない。
+      assert.equal(readAnalyzedFilenames(reader,settings),null);
+      writer.exec("ALTER TABLE ZADDITIONALASSETATTRIBUTES ADD COLUMN ZFACEANALYSISVERSION INTEGER; INSERT INTO Z_91ASSETS VALUES(1,30,0); INSERT INTO ZADDITIONALASSETATTRIBUTES VALUES(30,'new.mp4',0); UPDATE ZADDITIONALASSETATTRIBUTES SET ZFACEANALYSISVERSION=15 WHERE ZASSET IN (10,20)");
+      assert.deepEqual(readAnalyzedFilenames(reader,settings),['portrait.jpeg']);
+      assert.deepEqual(readAnalyzedFilenames(reader,{...settings,album:'ない'}),[]);
       assert.throws(() => reader.exec('DELETE FROM ZPERSON'));
     } finally { reader.close(); }
   } finally { writer.close(); await rm(dir,{recursive:true,force:true}); }

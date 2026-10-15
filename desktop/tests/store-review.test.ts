@@ -74,6 +74,17 @@ test('sibling names and albums must not collide', () => {
     assert.throws(() => validateSettings({ ...base, people: [{ name: '上の子', album: base.album }] }), /違う名前/);
   }
 });
+test('a photo Photos has not analyzed yet waits instead of being reported as not showing the child', () => {
+  const store = new Store(':memory:');
+  try {
+    store.upsertPhotos([photo('found'), photo('absent'), photo('waiting')]);
+    store.applyFaces([{ filename: 'found.jpeg', person: '対象', selected: true, reason: '' }], ['found.jpeg', 'absent.jpeg']);
+    assert.deepEqual(store.photos().map(p => [p.id, p.autoSelected, p.reason]).sort(), [['absent', false, '対象の人物が見つかりません'], ['found', true, '顔認識で候補になりました'], ['waiting', false, '顔認識の結果待ち']]);
+    // 解析の状態が分からないライブラリでは、これまでどおり見つからなかった写真は「写っていない」とする。
+    store.applyFaces([], null);
+    assert.equal(store.photo('waiting')?.reason, '対象の人物が見つかりません');
+  } finally { store.close(); }
+});
 test('manual include and exclude survive face reanalysis and source corrections', () => {
   const store = new Store(':memory:');
   try {
