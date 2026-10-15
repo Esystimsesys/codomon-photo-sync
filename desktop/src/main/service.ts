@@ -106,8 +106,8 @@ export class Service {
     const removed=[...selectedBefore].filter(id=>!selectedAfter.has(id)).length;
     const sent=after.filter(p=>p.uploadState==='sent'&&!sentBefore.has(p.id)).length;
     const summary=!s.people.length ? '顔認識を使う子どもは設定されていません。' : added||removed
-      ? `写真の選択を更新しました（追加${added}枚・解除${removed}枚）。`
-      : '顔認識を更新しました（選択中の写真に変更はありません）。';
+      ? `${s.miteneEnabled?'送る候補':'アルバムに入れる写真'}を更新しました（追加${added}枚・解除${removed}枚）。`
+      : `顔認識を更新しました（${s.miteneEnabled?'送る候補':'アルバムに入れる写真'}に変更はありません）。`;
     this.setProgress(summary+(sent ? ` みてねに${sent}枚送信しました。` : '')+note);
   });}
   async analyzeInternal():Promise<string[]>{

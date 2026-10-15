@@ -1487,6 +1487,10 @@ dialog {
 .facts dd {
   margin: 0;
 }
+.tab-note {
+  margin: -6px 0 14px;
+  font-size: 13px;
+}
 .tabs-row {
   display: flex;
   align-items: flex-end;
