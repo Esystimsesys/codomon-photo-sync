@@ -13,3 +13,7 @@ desktop/test-results/
 desktop/playwright-report/
 desktop/.test-data/
 desktop/.env.local
+
+# Exported signing identities (private keys must stay outside the repository)
+*.p12
+*.pfx

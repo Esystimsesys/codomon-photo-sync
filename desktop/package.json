@@ -1,6 +1,6 @@
 {
   "name": "codomon-photo-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "コドモンの写真と記録をMacに保存し、みてねへ送るツール",
   "author": "codomon-photo-sync contributors",
@@ -18,13 +18,17 @@
     "package:dir": "npm run build && electron-builder --dir --publish never",
     "package:mac": "npm run build && electron-builder --mac dmg zip --publish never",
     "browser:install": "node scripts/install-browser.mjs",
-    "test:native": "npm run build && node scripts/smoke-electron.mjs"
+    "test:native": "npm run build && node scripts/smoke-electron.mjs",
+    "signing:create": "node scripts/create-signing-identity.mjs",
+    "package:signed": "node scripts/package-signed.mjs",
+    "package:signed:dir": "node scripts/package-signed.mjs --dir"
   },
   "dependencies": {
     "piexifjs": "^1.0.6",
     "playwright": "^1.58.0"
   },
   "devDependencies": {
+    "@electron/osx-sign": "1.3.3",
     "@playwright/test": "^1.58.0",
     "@types/node": "^24.0.0",
     "electron": "^44.5.1",
@@ -73,6 +77,7 @@
       "icon": "build/icon.icns"
     },
     "publish": null,
-    "artifactName": "omukae-photo-${version}-${arch}.${ext}"
+    "artifactName": "omukae-photo-${version}-${arch}.${ext}",
+    "afterSign": "scripts/after-sign.cjs"
   }
 }

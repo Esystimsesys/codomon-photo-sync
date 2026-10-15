@@ -537,7 +537,7 @@ export async function analyzePhotos(settings: Settings): Promise<FaceResult[]> {
   const filename = settings.photosLibrary.endsWith('.sqlite') ? settings.photosLibrary : path.join(settings.photosLibrary, 'database', 'Photos.sqlite');
   let db: DatabaseSync | undefined;
   try { db = new DatabaseSync(filename, { readOnly: true }); db.exec('PRAGMA busy_timeout=30000'); return readFaceResults(db, settings); }
-  catch { throw new Error('写真ライブラリを読めません。Macの「写真」アプリを開き、ライブラリの場所とフルディスクアクセス権限を確認してください'); }
+  catch { throw new Error('写真ライブラリを読めません。設定の「許可の設定を開く」から、写真ライブラリへのフルアクセスを許可してください。ライブラリの場所も確認してください'); }
   finally { db?.close(); }
 }
 export function confirmedUploadCount(text: string): number | null {
