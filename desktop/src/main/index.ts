@@ -8,7 +8,8 @@ import { randomUUID } from 'node:crypto';
 import { Store, archivePathAllowed, validateSettings } from './store';
 import { Service, type Vault, safeError } from './service';
 import * as connectors from './connectors';
-import type { Session } from './connectors';
+import type { ConnectorOptions, Session } from './connectors';
+import { toSession, loginPageAllowed, onUploader } from './session-cookies';
 import type { Action, Settings } from '../shared/types';
 import { isVideo } from '../shared/media';
 
@@ -49,6 +50,46 @@ function browserExecutable():string|undefined{
     }
   }
   return undefined;
+}
+/**
+ * Mitene guards its uploader login with reCAPTCHA against machine logins, and refuses a browser launched under automation.
+ * So the person logs in here, in an ordinary app window with no automation attached, and only the resulting cookies are
+ * kept (encrypted, like every other session). The window uses a throwaway in-memory session and cannot leave Mitene.
+ */
+function miteneLogin(options:ConnectorOptions):Promise<Session>{
+  const ses=session.fromPartition(`mitene-login-${randomUUID()}`);
+  ses.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));
+  ses.setPermissionCheckHandler(()=>false);
+  const login=new BrowserWindow({width:560,height:780,parent:window??undefined,title:'みてねにログイン',backgroundColor:'#ffffff',
+    webPreferences:{session:ses,contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
+  login.webContents.setWindowOpenHandler(()=>({action:'deny'}));
+  login.webContents.on('will-navigate',e=>{if(!loginPageAllowed(e.url))e.preventDefault();});
+  login.webContents.on('will-redirect',e=>{if(!loginPageAllowed(e.url))e.preventDefault();});
+  options.onProgress?.('開いた画面でみてねにログインしてください。認証コードもご自身で入力してください。');
+  return new Promise((resolveLogin,rejectLogin)=>{
+    let done=false;
+    const finish=(error:Error|null,result?:Session)=>{
+      if(done)return;done=true;clearInterval(poll);clearTimeout(deadline);
+      if(!login.isDestroyed())login.destroy();
+      void ses.clearStorageData();
+      if(error)rejectLogin(error);else resolveLogin(result!);
+    };
+    // The file input appears only after the uploader page has rendered, as in the earlier browser-based login.
+    const check=async()=>{
+      if(done||login.isDestroyed()||!onUploader(login.webContents.getURL()))return;
+      const ready=await login.webContents.executeJavaScript("document.querySelectorAll('input[type=file]').length===1",false).catch(()=>false);
+      if(!ready||done)return;
+      const storage:unknown=await login.webContents.executeJavaScript('Object.entries(localStorage)',false).catch(()=>[]);
+      const entries=Array.isArray(storage)?storage.filter((x):x is [string,string]=>Array.isArray(x)&&typeof x[0]==='string'&&typeof x[1]==='string'):[];
+      const origin=new URL(login.webContents.getURL()).origin;
+      finish(null,toSession(await ses.cookies.get({}),[{origin,localStorage:entries.map(([name,value])=>({name,value}))}]));
+    };
+    const poll=setInterval(()=>void check(),2500);
+    const deadline=setTimeout(()=>finish(new Error('ログインを確認できないまま時間切れになりました。もう一度ログインしてください')),10*60_000);
+    login.on('closed',()=>finish(new Error('ログイン画面が閉じられました')));
+    // Redirects abort the first load, so a rejected loadURL is not a failure; closing the window is how to give up.
+    login.loadURL('https://mitene.us/web/uploader').catch(()=>{});
+  });
 }
 const VIDEO_PLACEHOLDER='<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360"><rect width="640" height="360" fill="#d9d6cc"/><circle cx="320" cy="180" r="44" fill="#fff" opacity=".85"/><path d="M306 158 L342 180 L306 202 Z" fill="#6b6a63"/></svg>';
 const ATTACHMENT_PLACEHOLDER=(type:string)=>`<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400" viewBox="0 0 300 400"><rect width="300" height="400" fill="#f1efe6"/><path d="M70 50 H190 L240 100 V350 H70 Z" fill="#fff" stroke="#c9c5b6" stroke-width="4"/><path d="M190 50 V100 H240" fill="none" stroke="#c9c5b6" stroke-width="4"/><text x="155" y="250" text-anchor="middle" font-size="34" font-family="sans-serif" fill="#6b6a63">${type.replace(/[^A-Za-z0-9]/g,'').slice(0,5)}</text></svg>`;
@@ -151,7 +192,7 @@ async function ready():Promise<void>{
   const data=app.getPath('userData');mkdirSync(data,{recursive:true,mode:0o700});chmodSync(data,0o700);
   store=new Store(join(data,'archive.sqlite'));
   const vault=new SessionVault(join(data,'sessions'));
-  service=new Service(store,vault,connectors,{version:app.getVersion(),executablePath:browserExecutable(),changed,notify,demo,validation:test&&!demo});
+  service=new Service(store,vault,{...connectors,manualLogin:(provider,options)=>provider==='mitene'?miteneLogin(options):connectors.manualLogin(provider,options)},{version:app.getVersion(),executablePath:browserExecutable(),changed,notify,demo,validation:test&&!demo});
   if(demo)await seedDemo();
   session.defaultSession.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));
   session.defaultSession.setPermissionCheckHandler(()=>false);
