@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Service, dayNow, type Connections, type Vault } from '../src/main/service';
 import { Store } from '../src/main/store';
 import type { ArchivePhoto, FaceResult, Settings, SyncResult } from '../src/shared/types';
-import type { Session } from '../src/main/connectors';
+import { CodmonAccessError, type Session } from '../src/main/connectors';
 const session: Session = { cookies: [], origins: [] };
 /** Face results from a library that does not report analysis progress. */
 const analysis = (faces: FaceResult[]) => ({ faces, analyzed: null });
@@ -374,4 +374,24 @@ test('videos are chosen by face and sent like photos, except those longer than m
     await assert.rejects(f.service.send(['long-2.mp4']), /10分を超える動画は、みてねの上限のため送れません/);
     assert.equal(f.uploads.length, 1);
   } finally { await f.close(); }
+});
+
+test('a sync stopped at the login check does not use up the daily limit', async () => {
+  const f=await fixture({miteneEnabled:false});let calls=0;
+  const now=new Date(2026,9,22,17,30);
+  try {
+    f.connections.syncCodmon=async()=>{calls++;throw new CodmonAccessError(503);};
+    await assert.rejects(f.service.sync(undefined,undefined,now),/接続できません（HTTP 503）/);
+    assert.equal(f.service.syncQuota(now).count,0);
+    assert.notEqual(f.store.get('codmonNeedsLogin'),true);
+    f.connections.syncCodmon=async()=>{calls++;throw new CodmonAccessError(401);};
+    await assert.rejects(f.service.sync(undefined,undefined,now),/再ログイン/);
+    assert.equal(f.service.syncQuota(now).count,0);
+    assert.equal(f.store.get('codmonNeedsLogin'),true);
+    // After logging in again, the same day still has both syncs.
+    f.connections.syncCodmon=async()=>{calls++;return {photos:[],posts:[],errors:[]};};
+    await f.service.sync(undefined,undefined,now);await f.service.sync(undefined,undefined,now);
+    await assert.rejects(f.service.sync(undefined,undefined,now),/1日2回/);
+    assert.equal(calls,4);
+  }finally{await f.close();}
 });

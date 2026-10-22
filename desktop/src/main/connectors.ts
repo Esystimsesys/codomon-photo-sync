@@ -331,11 +331,24 @@ export async function syncCodmon(settings: Settings, session: Session, startDate
     return result;
   } finally { await browser.close(); }
 }
+/**
+ * The first request of a sync stopped before any photo or record was fetched: the login has expired, or コドモン is down.
+ * Only this one light request was made, so the sync does not count toward the daily limit.
+ */
+export class CodmonAccessError extends Error {
+  constructor(readonly status: number) {
+    super(status >= 500 || status === 429
+      ? `コドモンに接続できません（HTTP ${status}）。サービスが止まっている可能性があります。次の同期の時刻にもう一度試します`
+      : `コドモンに再ログインしてください（HTTP ${status}）`);
+    this.name = 'CodmonAccessError';
+  }
+}
 export async function syncCodmonRequest(settings: Settings, request: BrowserContext['request'], startDate: string, endDate: string, options: ConnectorOptions = {}): Promise<SyncResult> {
   const ranges = monthlyIntervals(startDate, endDate);
   const result: SyncResult = { photos: [], posts: [], errors: [] };
     await consumeResponse(await request.get(`${API}/my/`), r => {
-      if (r.status() !== 200) throw new Error('コドモンに再ログインしてください');
+      // Only server-side failures are told apart; any other refusal still asks for a new login, as before.
+      if (r.status() !== 200) throw new CodmonAccessError(r.status());
     });
     const services = await consumeResponse(await request.get(`${API}/services/?__env__=myapp&use_image_edge=true`), async r => {
       if (r.status() !== 200) throw new Error('コドモンの施設情報を取得できません');
