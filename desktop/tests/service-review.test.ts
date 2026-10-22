@@ -287,16 +287,17 @@ test('daily acquisition quota covers manual and scheduled work, survives restart
     f.connections.syncCodmon=async()=>{acquisitions++;return {photos:[],posts:[],errors:[]};};
     await f.service.sync(undefined,undefined,day);
     await f.service.sync('2026-01-01','2026-01-02',day);
+    await f.service.sync(undefined,undefined,day);
     const restarted=new Service(f.store,f.vault,f.connections,{changed:()=>{},notify:()=>{}});
-    await assert.rejects(restarted.sync(undefined,undefined,day),/1日2回/);
+    await assert.rejects(restarted.sync(undefined,undefined,day),/1日3回/);
     f.store.saveSettings({...f.store.settings(),syncTimes:['11:00','19:00']});
     restarted.analyze=async()=>{faces++;};
     await restarted.scheduled(new Date(2026,9,8,20,0));
     await restarted.scheduled(new Date(2026,9,8,20,1));
-    assert.equal(acquisitions,2);assert.equal(faces,1,'face updates keep working after the acquisition quota is used');
+    assert.equal(acquisitions,3);assert.equal(faces,1,'face updates keep working after the acquisition quota is used');
     t.mock.timers.setTime(new Date(2026,9,9,12,0).getTime());
     await restarted.scheduled();
-    assert.equal(acquisitions,3);assert.deepEqual(f.store.get('codmonDailyQuota'),{date:'2026-10-09',count:1});
+    assert.equal(acquisitions,4);assert.deepEqual(f.store.get('codmonDailyQuota'),{date:'2026-10-09',count:1});
   } finally {await f.close();}
 });
 test('failed network attempts consume the quota but invalid dates and missing login do not contact the service', async () => {
@@ -309,10 +310,9 @@ test('failed network attempts consume the quota but invalid dates and missing lo
     const get=f.vault.get;f.vault.get=()=>{throw new Error('ログインしてください');};
     await assert.rejects(f.service.sync('2026-01-01','2026-01-02',now),/ログイン/);
     assert.equal(f.service.syncQuota(now).count,0);f.vault.get=get;
-    await assert.rejects(f.service.sync(undefined,undefined,now),/simulated network failure/);
-    await assert.rejects(f.service.sync(undefined,undefined,now),/simulated network failure/);
-    await assert.rejects(f.service.sync(undefined,undefined,now),/1日2回/);
-    assert.equal(calls,2);
+    for(let i=0;i<3;i++)await assert.rejects(f.service.sync(undefined,undefined,now),/simulated network failure/);
+    await assert.rejects(f.service.sync(undefined,undefined,now),/1日3回/);
+    assert.equal(calls,3);
   }finally{await f.close();}
 });
 test('upgrading initializes the daily limit from existing acquisition history', async () => {
@@ -320,10 +320,10 @@ test('upgrading initializes the daily limit from existing acquisition history', 
   const now=new Date(2026,9,8,10,0);
   try {
     const insert=f.store.db.prepare('INSERT INTO jobs(kind,startedAt,endedAt,status,message) VALUES(?,?,?,?,?)');
-    for(const status of ['success','error'])insert.run('写真・記録を取得',now.toISOString(),now.toISOString(),status,'fixture');
+    for(const status of ['success','error','error'])insert.run('写真・記録を取得',now.toISOString(),now.toISOString(),status,'fixture');
     f.connections.syncCodmon=async()=>{calls++;return {photos:[],posts:[],errors:[]};};
-    await assert.rejects(f.service.sync(undefined,undefined,now),/1日2回/);
-    assert.equal(calls,0);assert.equal(f.service.syncQuota(now).count,2);
+    await assert.rejects(f.service.sync(undefined,undefined,now),/1日3回/);
+    assert.equal(calls,0);assert.equal(f.service.syncQuota(now).count,3);
   }finally{await f.close();}
 });
 test('scheduler follows edited times, catches up only once and allows disabling each schedule separately', async () => {
@@ -390,8 +390,8 @@ test('a sync stopped at the login check does not use up the daily limit', async 
     assert.equal(f.store.get('codmonNeedsLogin'),true);
     // After logging in again, the same day still has both syncs.
     f.connections.syncCodmon=async()=>{calls++;return {photos:[],posts:[],errors:[]};};
-    await f.service.sync(undefined,undefined,now);await f.service.sync(undefined,undefined,now);
-    await assert.rejects(f.service.sync(undefined,undefined,now),/1日2回/);
-    assert.equal(calls,4);
+    for(let i=0;i<3;i++)await f.service.sync(undefined,undefined,now);
+    await assert.rejects(f.service.sync(undefined,undefined,now),/1日3回/);
+    assert.equal(calls,5);
   }finally{await f.close();}
 });

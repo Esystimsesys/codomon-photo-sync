@@ -280,11 +280,12 @@ test('a transfer file carries sends, manual choices and settings to another Mac 
   } finally { old.close(); mini.close(); }
 });
 
-test('schedule settings normalize times, reject duplicates and limit acquisition to two slots', () => {
+test('schedule settings normalize times, reject duplicates and limit acquisition to three slots', () => {
   const base=defaults('/fixture');
   assert.deepEqual(validateSettings({...base,syncTimes:['21:00','17:30'],faceTimes:[]}).syncTimes,['17:30','21:00']);
   assert.deepEqual(validateSettings({...base,syncTimes:[]}).syncTimes,[]);
-  for(const syncTimes of [['08:00','12:00','18:00'],['08:00','08:00'],['24:00'],['9:30'],null])assert.throws(()=>validateSettings({...base,syncTimes}));
+  assert.deepEqual(validateSettings({...base,syncTimes:['18:00','08:00','12:00']}).syncTimes,['08:00','12:00','18:00']);
+  for(const syncTimes of [['08:00','12:00','18:00','21:00'],['08:00','08:00'],['24:00'],['9:30'],null])assert.throws(()=>validateSettings({...base,syncTimes}));
   assert.throws(()=>validateSettings({...base,faceTimes:['13:00','13:00']}));
   const legacy={...base} as Partial<typeof base>;delete legacy.syncTimes;delete legacy.faceTimes;
   assert.deepEqual(validateSettings(legacy).syncTimes,['17:30','21:00']);

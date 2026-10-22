@@ -257,12 +257,16 @@ test('schedule times autosave and reappear when settings are reopened', async ({
  await expect(page.locator('[data-time-list="sync"] input').nth(1)).toHaveValue('21:30');
  await expect(page.locator('[data-time-list="face"] input').nth(0)).toHaveValue('07:00');
  await expect(page.locator('[data-time-list="face"] input').nth(3)).toHaveValue('23:30');
+ // Up to three sync times, the same as the daily acquisition limit.
+ await expect(page.locator('[data-add-time="sync"]')).toBeEnabled();
+ await page.locator('[data-add-time="sync"]').click();
+ await expect(page.locator('[data-time-list="sync"] input')).toHaveCount(3);
  await expect(page.locator('[data-add-time="sync"]')).toBeDisabled();
 });
 test('schedule times reject duplicates without sending invalid settings', async ({page}) => {
  await nativeFixture(page,true); await page.goto('/'); await page.getByRole('button', {name:'設定',exact:true}).click();
  const sync = page.locator('[data-time-list="sync"] input');
- await expect(page.locator('[data-add-time="sync"]')).toBeDisabled();
+ await expect(page.locator('[data-add-time="sync"]')).toBeEnabled();
  await sync.first().fill('18:00'); await sync.nth(1).fill('18:00');
  await expect(page.locator('#settings-save-state')).toContainText('同じ時刻が2つあります');
  const last = await page.evaluate(() => (window as unknown as {lastAction?:{settings?:{syncTimes:string[]}}}).lastAction?.settings?.syncTimes);

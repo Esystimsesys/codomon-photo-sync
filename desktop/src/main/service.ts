@@ -5,6 +5,7 @@ import { Store, archivePathAllowed, validDay, chosen } from './store';
 import type { Session, ConnectorOptions } from './connectors';
 import { beforeAutoSend } from '../shared/send';
 import { isVideo } from '../shared/media';
+import { DAILY_SYNC_LIMIT } from '../shared/limits';
 export interface Vault { has(provider:string): boolean; get(provider:string): Session; put(provider:string,value:Session):void; }
 export interface Connections {
   manualLogin(provider:'codmon'|'mitene',options:ConnectorOptions):Promise<Session>;
@@ -61,7 +62,7 @@ export class Service {
     if(this.busy)throw new Error('ほかの処理を実行中です。終わってからもう一度お試しください');
     // Initialize before startJob so the current attempt is not counted twice.
     const quota=this.syncQuota(now);
-    if(quota.count>=2)throw new Error('コドモンからの取り込みは1日2回までです。今日はもう取り込めません。明日もう一度お試しください。');
+    if(quota.count>=DAILY_SYNC_LIMIT)throw new Error(`コドモンからの取り込みは1日${DAILY_SYNC_LIMIT}回までです。今日はもう取り込めません。明日もう一度お試しください。`);
     await this.exclusive('写真・記録を取得',async()=>{
       const settings=this.store.settings();
       const end=endDate||dayNow(now);
@@ -158,7 +159,7 @@ export class Service {
     const syncSlot=latest(s.syncTimes),faceSlot=latest(s.faceTimes);
     if(syncSlot&&this.store.get<string>('syncAttempt')!==`${date} ${syncSlot}`){
       this.store.set('syncAttempt',`${date} ${syncSlot}`);
-      if(this.syncQuota(now).count<2){await this.sync(undefined,undefined,now);return;}
+      if(this.syncQuota(now).count<DAILY_SYNC_LIMIT){await this.sync(undefined,undefined,now);return;}
     }
     // Previous versions stored a bare hour. Treat it as the same slot when upgrading.
     const previousFace=this.store.get<string>('faceAttempt')?.replace(/ (\d{1,2})$/,(_,h:string)=>` ${h.padStart(2,'0')}:00`);

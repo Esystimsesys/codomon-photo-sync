@@ -4,6 +4,7 @@ import { realpath, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { autoSending } from '../shared/send';
+import { DAILY_SYNC_LIMIT } from '../shared/limits';
 import type { ArchivePhoto, ArchivePost, Decision, FaceResult, Job, Person, Photo, Settings, TransferFile, UploadState } from '../shared/types';
 
 export function defaults(home = homedir()): Settings {
@@ -41,7 +42,7 @@ export function validateSettings(value: unknown): Settings {
   if (autoSendFrom !== '' && !validDay(autoSendFrom)) throw new Error('自動送信の開始日が正しくありません');
   for (const key of ['faceMinPx','faceMinRatio','faceMainRatio','faceMaxPeople'] as const) if (typeof s[key] !== 'number' || !Number.isFinite(s[key]) || s[key] < 0) throw new Error('顔の選別条件が正しくありません');
   if (s.faceMinRatio > 1 || s.faceMainRatio > 1 || s.faceMinPx > 10000 || !Number.isInteger(s.faceMaxPeople) || s.faceMaxPeople > 1000) throw new Error('顔の選別条件が範囲外です');
-  const syncTimes = validateTimes(s.syncTimes === undefined ? defaults().syncTimes : s.syncTimes, '同期', 2);
+  const syncTimes = validateTimes(s.syncTimes === undefined ? defaults().syncTimes : s.syncTimes, '同期', DAILY_SYNC_LIMIT);
   const faceTimes = validateTimes(s.faceTimes === undefined ? defaults().faceTimes : s.faceTimes, '顔認識の更新');
   // Project only known fields; credentials and renderer-controlled fields never enter settings.
   return { ...Object.fromEntries(Object.keys(defaults()).map(k => [k, s[k as keyof Settings]])), people, syncTimes, faceTimes, autoSendFrom } as unknown as Settings;
@@ -84,7 +85,7 @@ export class Store {
     const s = { ...defaults(), ...this.get<Settings>('settings') };
     // 以前の初期値は「全期間」の意味だったので、記録のある期間をさかのぼる今の動きに読み替える。
     if (s.initialStartDate === '2000-01-01') s.initialStartDate = '';
-    return { ...s, syncTimes: validateTimes(s.syncTimes, '同期', 2), faceTimes: validateTimes(s.faceTimes, '顔認識の更新') };
+    return { ...s, syncTimes: validateTimes(s.syncTimes, '同期', DAILY_SYNC_LIMIT), faceTimes: validateTimes(s.faceTimes, '顔認識の更新') };
   }
   saveSettings(s: Settings, today = localDay(), carriedAutoSendFrom = ''): void {
     const before = this.settings(), next = validateSettings(s);
