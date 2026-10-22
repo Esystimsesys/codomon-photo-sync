@@ -83,7 +83,13 @@ export class Service {
       if(!backfill)this.store.set('pendingSync',{start,end:until});
       // Reserve before contacting コドモン. Network failures also consume a request; restarts keep the count.
       this.store.set('codmonDailyQuota',{date:quota.date,count:quota.count+1});
-      const result=await this.connectors.syncCodmon(settings,session,start,until,{...this.connectorOptions('codmon'),...(backfill?{stopAfterEmptyMonths:12,...(pending?{fetchAllFrom:pending.start}:{})}:{})});
+      let result:SyncResult;
+      try{result=await this.connectors.syncCodmon(settings,session,start,until,{...this.connectorOptions('codmon'),...(backfill?{stopAfterEmptyMonths:12,...(pending?{fetchAllFrom:pending.start}:{})}:{})});}
+      catch(e){
+        // Stopped at the login check: give the reserved attempt back, so a new login can sync the same day.
+        if(e instanceof Error&&e.name==='CodmonAccessError')this.store.set('codmonDailyQuota',quota);
+        throw e;
+      }
       this.store.ingest(result.photos,result.posts);
       if(!result.errors.length){if(!startDate&&!endDate)this.store.set('lastSync',new Date().toISOString());this.store.set('pendingSync',null);}
       const errors=[...result.errors];
