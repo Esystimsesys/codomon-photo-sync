@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import piexif from 'piexifjs';
 import { normalizeDate, monthlyIntervals, entryDate, postedDate, timelinePhotos, recordBody, photoFilename, codmonUrl, stampExif, atomicWrite, fetchTimeline, readFaceResults, readAnalyzedFilenames, judgeFace, confirmedUploadCount, appleScriptString, syncCodmonRequest } from '../src/main/connectors';
+import { CodmonAccessError } from '../src/main/connectors';
 import type { Settings } from '../src/shared/types';
 const settings = { album:'園',people:[{name:'対象',album:''}],faceMinPx:25,faceMinRatio:0.6,faceMainRatio:0.8,faceMaxPeople:5 } as unknown as Settings;
 
@@ -488,4 +489,19 @@ test('a video attached to a notice is recorded with the post, never as a photo',
     assert.deepEqual(result.posts.map(p=>p.videos),[[{name:'IMG_0665.mov',size:130077733,expires:'2026-10-20 12:26:03'}],undefined]);
     assert.match(await readFile(result.posts[0].path,'utf8'),/動画: IMG_0665\.mov（124MB・再生期限 2026-10-20 12:26:03）/);
   } finally { await rm(dir,{recursive:true,force:true}); }
+});
+
+test('the login check tells an outage apart from an expired login', async () => {
+  const at = (status: number) => ({ get: async () => ({ dispose: async () => {}, status: () => status, json: async () => ({}) }) }) as any;
+  for (const status of [500, 503, 429]) {
+    const error = await syncCodmonRequest({...settings,saveRoot:tmpdir()}, at(status), '2026-10-01', '2026-10-02').catch(e => e);
+    assert.ok(error instanceof CodmonAccessError);
+    assert.match(error.message, new RegExp(`接続できません（HTTP ${status}）`));
+    assert.doesNotMatch(error.message, /再ログイン/);
+  }
+  for (const status of [401, 403, 400]) {
+    const error = await syncCodmonRequest({...settings,saveRoot:tmpdir()}, at(status), '2026-10-01', '2026-10-02').catch(e => e);
+    assert.ok(error instanceof CodmonAccessError);
+    assert.match(error.message, new RegExp(`コドモンに再ログインしてください（HTTP ${status}）`));
+  }
 });
