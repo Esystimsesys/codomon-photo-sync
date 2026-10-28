@@ -395,3 +395,18 @@ test('a sync stopped at the login check does not use up the daily limit', async 
     assert.equal(calls,5);
   }finally{await f.close();}
 });
+test('history, notifications and older history keep only the first line of a network error, not the cookies in its call log', async () => {
+  const f = await fixture();
+  const playwrightError = 'apiRequestContext.get: getaddrinfo ENOTFOUND ps-api.codmon.com\nCall log:\n\u001b[2m  - → GET https://ps-api.codmon.com/api/v2/parent/my/\u001b[22m\n\u001b[2m    - cookie: CODMONSESSID=synthetic-session\u001b[22m\n';
+  try {
+    f.connections.syncCodmon = async () => { throw new Error(playwrightError); };
+    await assert.rejects(f.service.sync('2026-01-01', '2026-01-02'), error => !(error as Error).message.includes('CODMONSESSID'));
+    assert.equal(f.store.jobs()[0].message, 'apiRequestContext.get: getaddrinfo ENOTFOUND ps-api.codmon.com');
+    assert.deepEqual(f.messages, ['apiRequestContext.get: getaddrinfo ENOTFOUND ps-api.codmon.com']);
+    const old = f.store.startJob('写真・記録を取得'); f.store.finishJob(old, playwrightError);
+    const path = join(f.root, 'state.sqlite'); f.store.close();
+    const reopened = new Store(path);
+    try { assert.ok(reopened.jobs().every(j => !j.message.includes('\n') && !j.message.includes('CODMONSESSID'))); }
+    finally { reopened.close(); }
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});

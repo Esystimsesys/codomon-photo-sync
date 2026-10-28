@@ -10,6 +10,7 @@ import piexif from 'piexifjs';
 import type { ArchivePhoto, ArchivePost, ArchiveVideo, SyncResult, FaceAnalysis, FaceResult, Person, Settings } from '../shared/types';
 import { personAlbum } from './store';
 import { isVideo } from '../shared/media';
+import { errorLine } from './errors';
 
 export type Session = Awaited<ReturnType<BrowserContext['storageState']>>;
 export interface ConnectorOptions {
@@ -475,7 +476,7 @@ export async function childNames(request: Pick<BrowserContext['request'], 'get'>
   } catch { /* Keep archiving without labels. */ }
   return names;
 }
-function errorText(e: unknown): string { return e instanceof Error ? e.message : '処理に失敗しました'; }
+function errorText(e: unknown): string { return e instanceof Error ? errorLine(e.message) : '処理に失敗しました'; }
 
 export function appleScriptString(text: string): string { return `"${text.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\r', '\\r').replaceAll('\n', '\\n')}"`; }
 // Fetch all names in one Apple Event. Iterating media items one by one sends an event per photo, and Photos

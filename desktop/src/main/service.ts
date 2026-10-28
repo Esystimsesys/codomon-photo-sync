@@ -6,6 +6,7 @@ import type { Session, ConnectorOptions } from './connectors';
 import { beforeAutoSend } from '../shared/send';
 import { isVideo } from '../shared/media';
 import { DAILY_SYNC_LIMIT } from '../shared/limits';
+import { errorLine } from './errors';
 export interface Vault { has(provider:string): boolean; get(provider:string): Session; put(provider:string,value:Session):void; }
 export interface Connections {
   manualLogin(provider:'codmon'|'mitene',options:ConnectorOptions):Promise<Session>;
@@ -31,7 +32,7 @@ export function personPhotos(photos:Photo[],faces:FaceResult[],person:Person,cou
 /** Earliest day an automatic backfill may reach. Codmon records do not go back further. */
 export const EARLIEST_DAY='2000-01-01';
 export function dayNow(now=new Date()):string { return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`; }
-export function safeError(e:unknown):string { return (e instanceof Error?e.message:'処理に失敗しました').replace(/https?:\/\/[^\s)）]+/g,'[接続先]').slice(0,1000); }
+export function safeError(e:unknown):string { return errorLine(e instanceof Error?e.message:'処理に失敗しました').replace(/https?:\/\/[^\s)）]+/g,'[接続先]').slice(0,1000); }
 export class Service {
   busy=false; progress=''; update:Snapshot['update']=null;
   constructor(readonly store:Store,readonly vault:Vault,readonly connectors:Connections,readonly options:{version?:string;executablePath?:string;changed:()=>void;notify:(message:string)=>void;demo?:boolean;validation?:boolean}){}
