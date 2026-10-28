@@ -102,7 +102,7 @@ test('manual selection persists when switching tabs', async ({page}) => {
  await page.locator('[data-decision][data-value="exclude"]').first().click();
  await expect(page.locator('.photo-card')).toHaveCount(2);
  await page.getByRole('button', {name:/^送らない/}).click();
- await expect(page.locator('.photo-card')).toHaveCount(4);
+ await expect(page.locator('.photo-card')).toHaveCount(3);
  await expect(page.locator('[data-decision][data-value="auto"]')).toHaveCount(2);
 });
 test('uncertain result requires explicit resolution', async ({page}) => {
@@ -346,10 +346,14 @@ test('newly added time rows can be removed and invalid drafts survive navigation
  await expect(page.locator('[data-time-list="sync"] input')).toHaveCount(1);
  await expect(page.locator('#settings-save-state')).toHaveText('設定は保存済みです');
 });
-test('photo tabs group by state: to send, not sent, and sent, each with a note on what it holds', async ({page}) => {
+test('photo tabs group by state: to send, waiting for faces, not sent, and sent, each with a note on what it holds', async ({page}) => {
  await page.goto('/'); await page.getByRole('button', {name:'写真', exact:true}).click();
  const tabs = page.getByRole('group', {name:'写真の絞り込み'}).getByRole('button');
- await expect(tabs).toHaveText([/^送る候補/, /^送らない/, /^送信済み/]);
+ await expect(tabs).toHaveText([/^送る候補/, /^顔認識待ち/, /^送らない/, /^送信済み/]);
+ await page.getByRole('button', {name:/^顔認識待ち/}).click();
+ await expect(page.locator('.tab-note')).toHaveText(/顔の解析が終わっていない写真です/);
+ await expect(page.locator('.photo-card')).toHaveCount(1);
+ await page.getByRole('button', {name:/^送る候補/}).click();
  await expect(page.locator('.tab-note')).toHaveText(/チェックして、みてねに送ります/);
  await expect(page.locator('.photo-card .decision .chosen').first()).toHaveText('✓ 送る');
  await page.getByRole('button', {name:/^送らない/}).click();
