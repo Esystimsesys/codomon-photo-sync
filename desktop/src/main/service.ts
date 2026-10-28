@@ -85,8 +85,10 @@ export class Service {
       if(!backfill)this.store.set('pendingSync',{start,end:until});
       // Reserve before contacting コドモン. Network failures also consume a request; restarts keep the count.
       this.store.set('codmonDailyQuota',{date:quota.date,count:quota.count+1});
-      let result:SyncResult;
-      try{result=await this.connectors.syncCodmon(settings,session,start,until,{...this.connectorOptions('codmon'),...(backfill?{stopAfterEmptyMonths:12,...(pending?{fetchAllFrom:pending.start}:{})}:{})});}
+      let result:SyncResult,renewed='';
+      // Keep when the login was renewed and the token expiries, to see whether renewing extends the login.
+      const onCodmonRefresh=(expiry:{before:string|null;after:string|null})=>{renewed='（コドモンのログインを自動で更新しました）';this.store.set('codmonRefresh',{at:new Date().toISOString(),...expiry});};
+      try{result=await this.connectors.syncCodmon(settings,session,start,until,{...this.connectorOptions('codmon'),onCodmonRefresh,...(backfill?{stopAfterEmptyMonths:12,...(pending?{fetchAllFrom:pending.start}:{})}:{})});}
       catch(e){
         // Stopped at the login check: give the reserved attempt back, so a new login can sync the same day.
         if(e instanceof Error&&e.name==='CodmonAccessError')this.store.set('codmonDailyQuota',quota);
@@ -99,8 +101,8 @@ export class Service {
       try{errors.push(...await this.analyzeInternal());}catch(e){analyzed=false;errors.push(safeError(e));}
       // Per-photo acquisition/import warnings never block already selected photos. Failed face analysis does.
       const note=analyzed&&settings.sendMode==='automatic'&&settings.miteneEnabled?await this.sendInternal():'';
-      if(errors.length)throw new Error(`${result.photos.length}枚の写真・${result.posts.length}件の記録を確認しました。一部に問題があります：${errors.slice(0,5).join(' / ')}`);
-      this.setProgress(`${result.photos.length}枚の写真・${result.posts.length}件の記録を確認しました${note}`);
+      if(errors.length)throw new Error(`${result.photos.length}枚の写真・${result.posts.length}件の記録を確認しました${renewed}。一部に問題があります：${errors.slice(0,5).join(' / ')}`);
+      this.setProgress(`${result.photos.length}枚の写真・${result.posts.length}件の記録を確認しました${renewed}${note}`);
     });
   }
   async analyze():Promise<void>{await this.exclusive('候補を更新',async()=>{

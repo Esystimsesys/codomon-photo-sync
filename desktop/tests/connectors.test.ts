@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import piexif from 'piexifjs';
 import { normalizeDate, monthlyIntervals, entryDate, postedDate, timelinePhotos, recordBody, photoFilename, codmonUrl, stampExif, atomicWrite, fetchTimeline, readFaceResults, readAnalyzedFilenames, judgeFace, confirmedUploadCount, appleScriptString, syncCodmonRequest } from '../src/main/connectors';
-import { CodmonAccessError } from '../src/main/connectors';
+import { CodmonAccessError, refreshCodmonSession, withCodmonTokens, tokenExpiry } from '../src/main/connectors';
 import type { Settings } from '../src/shared/types';
 const settings = { album:'園',people:[{name:'対象',album:''}],faceMinPx:25,faceMinRatio:0.6,faceMainRatio:0.8,faceMaxPeople:5 } as unknown as Settings;
 
@@ -504,4 +504,56 @@ test('the login check tells an outage apart from an expired login', async () => 
     assert.ok(error instanceof CodmonAccessError);
     assert.match(error.message, new RegExp(`コドモンに再ログインしてください（HTTP ${status}）`));
   }
+});
+
+test('an expired login is renewed once with the refresh token, and only a 401 tries it', async () => {
+  const calls: string[] = [];
+  const at = (statuses: number[]) => ({ get: async (url: string) => { calls.push(url); const status = statuses.shift() ?? 200; return { dispose: async () => {}, status: () => status, json: async () => ({}) }; } }) as any;
+  let refreshed = 0;
+  const renew = (ok: boolean) => async () => { refreshed++; return ok; };
+  const renewedThenStop = await syncCodmonRequest({...settings,saveRoot:tmpdir()}, at([401, 200, 500]), '2026-10-01', '2026-10-02', {}, renew(true)).catch(e => e);
+  assert.equal(refreshed, 1); assert.match(String(renewedThenStop.message), /施設情報/, 'continues past the login check after renewing');
+  refreshed = 0;
+  const refused = await syncCodmonRequest({...settings,saveRoot:tmpdir()}, at([401]), '2026-10-01', '2026-10-02', {}, renew(false)).catch(e => e);
+  assert.equal(refreshed, 1); assert.ok(refused instanceof CodmonAccessError); assert.match(refused.message, /再ログインしてください（HTTP 401）/);
+  refreshed = 0;
+  const outage = await syncCodmonRequest({...settings,saveRoot:tmpdir()}, at([503]), '2026-10-01', '2026-10-02', {}, renew(true)).catch(e => e);
+  assert.equal(refreshed, 0); assert.ok(outage instanceof CodmonAccessError);
+});
+
+test('renewal sends the saved refresh token and keeps the new tokens where the コドモン page reads them', async () => {
+  const page = 'https://parents.codmon.com';
+  const session = { cookies: [], origins: [
+    { origin: page, localStorage: [{ name: 'CapacitorStorage.codmon_semantic_id', value: 'old-refresh' }, { name: 'CapacitorStorage.codmon_following_id', value: 'old-csrf' }, { name: 'CapacitorStorage.codmon_client_unique_id', value: 'client' }, { name: 'codmon_parent_id', value: 'parent' }] },
+    { origin: 'https://mitene.us', localStorage: [{ name: 'other', value: 'kept' }] },
+  ] };
+  const sent: any[] = [];
+  const answer = (status: number, body: unknown) => ({ post: async (url: string, options: any) => { sent.push({ url, ...options }); return { dispose: async () => {}, status: () => status, json: async () => body }; } }) as any;
+
+  assert.equal(await refreshCodmonSession(answer(200, {}), { cookies: [], origins: [] }), null);
+  assert.equal(sent.length, 0, 'no token, no request');
+
+  const tokens = await refreshCodmonSession(answer(200, { data: { refresh_token: 'new-refresh', csrf_token: 'new-csrf' } }), session);
+  assert.deepEqual(tokens, { refresh: 'new-refresh', csrf: 'new-csrf' });
+  assert.equal(sent[0].url, 'https://ps-api.codmon.com/api/v3/parent/refresh_session?__env__=myapp');
+  assert.deepEqual(sent[0].data, { refresh_token: 'old-refresh' });
+  assert.equal(sent[0].headers['Codmon-Parent-CSRF-Token'], 'old-csrf'); assert.equal(sent[0].headers['Codmon-Client-Unique-Id'], 'client');
+
+  const saved = withCodmonTokens(session, tokens!);
+  const stored = Object.fromEntries(saved.origins.find(o => o.origin === page)!.localStorage.map(e => [e.name, e.value]));
+  assert.deepEqual(stored, { 'CapacitorStorage.codmon_semantic_id': 'new-refresh', 'CapacitorStorage.codmon_following_id': 'new-csrf', 'CapacitorStorage.codmon_client_unique_id': 'client', codmon_parent_id: 'parent' });
+  assert.deepEqual(saved.origins.find(o => o.origin === 'https://mitene.us'), session.origins[1]);
+
+  for (const [status, body] of [[401, {}], [200, { data: { csrf_token: 'x' } }], [200, null]] as const) {
+    const error = await refreshCodmonSession(answer(status, body), session).catch(e => e);
+    assert.ok(error instanceof CodmonAccessError); assert.match(error.message, /コドモンに再ログインしてください/);
+  }
+  const outage = await refreshCodmonSession(answer(503, {}), session).catch(e => e);
+  assert.match(outage.message, /接続できません/);
+});
+
+test('token expiry is read from a JWT and left empty for other tokens', () => {
+  const jwt = ['e30', Buffer.from(JSON.stringify({ exp: 1798761600 })).toString('base64url'), 'sig'].join('.');
+  assert.equal(tokenExpiry(jwt), '2027-01-01T00:00:00.000Z');
+  assert.equal(tokenExpiry('opaque-token'), null);
 });
