@@ -10,6 +10,7 @@ import piexif from 'piexifjs';
 import type { ArchivePhoto, ArchivePost, ArchiveVideo, SyncResult, FaceAnalysis, FaceResult, Person, Settings } from '../shared/types';
 import { personAlbum } from './store';
 import { isVideo } from '../shared/media';
+import { errorLine } from './errors';
 
 export type Session = Awaited<ReturnType<BrowserContext['storageState']>>;
 export interface ConnectorOptions {
@@ -24,6 +25,8 @@ export interface ConnectorOptions {
   requestIntervalMs?: number;
   /** Turns the joined MPEG-TS segments into an MP4. Defaults to macOS avconvert; tests replace it. */
   convertVideo?: (source: string, output: string) => Promise<void>;
+  /** Called after an expired コドモン login was renewed, with the expiry of the old and new refresh tokens when they carry one. */
+  onCodmonRefresh?: (expiry: { before: string | null; after: string | null }) => void;
 }
 type Item = Record<string, any>;
 const API = 'https://ps-api.codmon.com/api/v2/parent';
@@ -326,8 +329,19 @@ export async function syncCodmon(settings: Settings, session: Session, startDate
   monthlyIntervals(startDate, endDate);
   const { browser, context } = await contextFor(session, options);
   try {
-    const result = await syncCodmonRequest(settings, context.request, startDate, endDate, options);
-    await options.onSession?.(await context.storageState());
+    let tokens: CodmonTokens | null = null;
+    const refresh = async () => {
+      const before = codmonStorage(session, CODMON_STORAGE.refresh);
+      tokens = await refreshCodmonSession(context.request, session);
+      if (!tokens) return false;
+      // The old refresh token stops working once a new one is issued, so save before the sync can fail.
+      await options.onSession?.(withCodmonTokens(await context.storageState(), tokens));
+      options.onCodmonRefresh?.({ before: before ? tokenExpiry(before) : null, after: tokenExpiry(tokens.refresh) });
+      return true;
+    };
+    const result = await syncCodmonRequest(settings, context.request, startDate, endDate, options, refresh);
+    const state = await context.storageState();
+    await options.onSession?.(tokens ? withCodmonTokens(state, tokens) : state);
     return result;
   } finally { await browser.close(); }
 }
@@ -336,20 +350,65 @@ export async function syncCodmon(settings: Settings, session: Session, startDate
  * Only this one light request was made, so the sync does not count toward the daily limit.
  */
 export class CodmonAccessError extends Error {
-  constructor(readonly status: number) {
-    super(status >= 500 || status === 429
+  constructor(readonly status: number, message?: string) {
+    super(message ?? (status >= 500 || status === 429
       ? `コドモンに接続できません（HTTP ${status}）。サービスが止まっている可能性があります。次の同期の時刻にもう一度試します`
-      : `コドモンに再ログインしてください（HTTP ${status}）`);
+      : `コドモンに再ログインしてください（HTTP ${status}）`));
     this.name = 'CodmonAccessError';
   }
 }
-export async function syncCodmonRequest(settings: Settings, request: BrowserContext['request'], startDate: string, endDate: string, options: ConnectorOptions = {}): Promise<SyncResult> {
+const CODMON_PAGE = 'https://parents.codmon.com';
+// コドモンの画面が localStorage（Capacitor Preferences の Web 実装）に置くキー。名前は画面の配信コードで確認した。
+const CODMON_STORAGE = { refresh: 'CapacitorStorage.codmon_semantic_id', csrf: 'CapacitorStorage.codmon_following_id', client: 'CapacitorStorage.codmon_client_unique_id' };
+// コドモンの画面が送る版。再発行で必要かは未確認のため、画面と同じ値を送る。
+const CODMON_APP_VERSION = '4.39.0.0-4';
+export interface CodmonTokens { refresh: string; csrf: string }
+function codmonStorage(session: Session, name: string): string | undefined {
+  return session.origins.find(o => o.origin === CODMON_PAGE)?.localStorage.find(e => e.name === name)?.value || undefined;
+}
+/** The session with the tokens コドモン issued, where its page keeps them, so the next renewal and a page opened later both use them. */
+export function withCodmonTokens(session: Session, tokens: CodmonTokens): Session {
+  const page = session.origins.find(o => o.origin === CODMON_PAGE);
+  const replaced = new Set([CODMON_STORAGE.refresh, CODMON_STORAGE.csrf]);
+  const localStorage = [...(page?.localStorage ?? []).filter(e => !replaced.has(e.name)), { name: CODMON_STORAGE.refresh, value: tokens.refresh }, { name: CODMON_STORAGE.csrf, value: tokens.csrf }];
+  return { cookies: session.cookies, origins: [...session.origins.filter(o => o.origin !== CODMON_PAGE), { origin: CODMON_PAGE, localStorage }] };
+}
+/** The expiry of a JWT, or null when the token is not one. Read only for the history; the token is never verified here. */
+export function tokenExpiry(token: string): string | null {
+  try {
+    const exp = JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString()).exp;
+    return typeof exp === 'number' ? new Date(exp * 1000).toISOString() : null;
+  } catch { return null; }
+}
+/**
+ * Renews an expired login with the refresh token the login page saved, as コドモン's own page does on a 401.
+ * Null when there is no token to use; a refusal ends the sync like an expired login.
+ */
+export async function refreshCodmonSession(request: Pick<BrowserContext['request'], 'post'>, session: Session): Promise<CodmonTokens | null> {
+  const token = codmonStorage(session, CODMON_STORAGE.refresh);
+  if (!token) return null;
+  const headers: Record<string, string> = { Accept: 'application/json', 'Codmon-App-Version': CODMON_APP_VERSION };
+  const csrf = codmonStorage(session, CODMON_STORAGE.csrf), client = codmonStorage(session, CODMON_STORAGE.client);
+  if (csrf) headers['Codmon-Parent-CSRF-Token'] = csrf;
+  if (client) headers['Codmon-Client-Unique-Id'] = client;
+  return consumeResponse(await request.post('https://ps-api.codmon.com/api/v3/parent/refresh_session?__env__=myapp', { data: { refresh_token: token }, headers }), async r => {
+    if (r.status() !== 200) throw new CodmonAccessError(r.status());
+    const data = (await r.json().catch(() => null))?.data;
+    if (typeof data?.refresh_token !== 'string' || !data.refresh_token || typeof data.csrf_token !== 'string') throw new CodmonAccessError(r.status(), 'コドモンのログインを更新できませんでした（応答の形式が変わっています）。コドモンに再ログインしてください');
+    return { refresh: data.refresh_token, csrf: data.csrf_token };
+  });
+}
+export async function syncCodmonRequest(settings: Settings, request: BrowserContext['request'], startDate: string, endDate: string, options: ConnectorOptions = {}, refresh?: () => Promise<boolean>): Promise<SyncResult> {
   const ranges = monthlyIntervals(startDate, endDate);
   const result: SyncResult = { photos: [], posts: [], errors: [] };
-    await consumeResponse(await request.get(`${API}/my/`), r => {
-      // Only server-side failures are told apart; any other refusal still asks for a new login, as before.
-      if (r.status() !== 200) throw new CodmonAccessError(r.status());
-    });
+    const loggedIn = async () => consumeResponse(await request.get(`${API}/my/`), r => r.status());
+    let status = await loggedIn();
+    if (status === 401 && refresh) {
+      options.onProgress?.('コドモンのログインを更新しています');
+      if (await refresh()) status = await loggedIn();
+    }
+    // Only server-side failures are told apart; any other refusal still asks for a new login, as before.
+    if (status !== 200) throw new CodmonAccessError(status);
     const services = await consumeResponse(await request.get(`${API}/services/?__env__=myapp&use_image_edge=true`), async r => {
       if (r.status() !== 200) throw new Error('コドモンの施設情報を取得できません');
       return (await r.json()).data;
@@ -475,7 +534,7 @@ export async function childNames(request: Pick<BrowserContext['request'], 'get'>
   } catch { /* Keep archiving without labels. */ }
   return names;
 }
-function errorText(e: unknown): string { return e instanceof Error ? e.message : '処理に失敗しました'; }
+function errorText(e: unknown): string { return e instanceof Error ? errorLine(e.message) : '処理に失敗しました'; }
 
 export function appleScriptString(text: string): string { return `"${text.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\r', '\\r').replaceAll('\n', '\\n')}"`; }
 // Fetch all names in one Apple Event. Iterating media items one by one sends an event per photo, and Photos

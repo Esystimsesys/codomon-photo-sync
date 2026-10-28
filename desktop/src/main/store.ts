@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { autoSending } from '../shared/send';
 import { DAILY_SYNC_LIMIT } from '../shared/limits';
+import { errorLine } from './errors';
 import type { ArchivePhoto, ArchivePost, Decision, FaceResult, Job, Person, Photo, Settings, TransferFile, UploadState } from '../shared/types';
 
 export function defaults(home = homedir()): Settings {
@@ -76,6 +77,8 @@ export class Store {
     // 開始日のない古い設定で自動送信していたら、この版を初めて開いた日を開始日にする。それより前の未送信の写真を、急に自動で送らないため。
     const saved = this.get<Settings>('settings');
     if (saved && autoSending(saved) && !saved.autoSendFrom) this.set('settings', { ...saved, autoSendFrom: localDay() });
+    // 以前の版が履歴に残した、Cookie を含む通信の記録を消す。
+    for (const job of this.db.prepare("SELECT id, message FROM jobs WHERE instr(message, char(10)) > 0").all()) this.db.prepare('UPDATE jobs SET message=? WHERE id=?').run(errorLine(String(job.message)), job.id);
     this.db.prepare("UPDATE jobs SET status='error', endedAt=?, message='前回の処理が途中で終了しました。送信できたか分からない写真は、写真画面のお知らせから確認してください。' WHERE status='running'").run(new Date().toISOString());
   }
   transaction<T>(fn: () => T): T { this.db.exec('BEGIN IMMEDIATE'); try { const result = fn(); this.db.exec('COMMIT'); return result; } catch (e) { this.db.exec('ROLLBACK'); throw e; } }

@@ -33,6 +33,8 @@ let saveError = '';
 let settingsDraft: FormData | null = null;
 const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 const candidate = (p: Photo) => p.decision === 'include' || (p.decision === 'auto' && p.autoSelected);
+/** 「写真」アプリの顔の解析を待っていて、まだ送るかどうかが決まっていない写真。自分で選んだ・外した写真は含めない。 */
+const waiting = (p: Photo) => p.uploadState === 'pending' && p.decision === 'auto' && p.reason === '顔認識の結果待ち' && !!state.settings.people.length;
 const available = (p: Photo) => p.uploadState === 'pending' && p.decision !== 'exclude';
 // 自動送信をオンにした日より前に届いた、未送信の送る写真。自動では送らないので、見てから手動で送る。
 const older = (p: Photo) => available(p) && candidate(p) && beforeAutoSend(p, state.settings);
@@ -123,17 +125,20 @@ function recovery(job: Job): string {
 }
 function libraryName(path: string): string { return path ? path.split('/').find(p => p.endsWith('.photoslibrary')) || '選択したライブラリ' : '標準の写真ライブラリ'; }
 function empty(title: string, body: string) { return `<div class="empty"><span class="empty-icon">${icon('photos')}</span><h3>${title}</h3><p>${body}</p></div>`; }
-function matches(p: Photo, f: string) { return f === 'all' || (f === 'candidates' && ((available(p) && candidate(p) && !beforeAutoSend(p, state.settings)) || p.uploadState === 'sending')) || (f === 'older' && older(p)) || (f === 'others' && ((p.uploadState === 'pending' && !candidate(p)) || p.uploadState === 'skipped')) || (f === 'sent' && p.uploadState === 'sent') || (f === 'uncertain' && p.uploadState === 'uncertain'); }
+function matches(p: Photo, f: string) { return f === 'all' || (f === 'candidates' && ((available(p) && candidate(p) && !beforeAutoSend(p, state.settings)) || p.uploadState === 'sending')) || (f === 'older' && older(p)) || (f === 'waiting' && waiting(p)) || (f === 'others' && ((p.uploadState === 'pending' && !candidate(p) && !waiting(p)) || p.uploadState === 'skipped')) || (f === 'sent' && p.uploadState === 'sent') || (f === 'uncertain' && p.uploadState === 'uncertain'); }
 function visiblePhotos() { return state.photos.filter(p => matches(p, usesSelection() ? filter : 'all')); }
 /** 送る・入れる（候補）と、送らない・入れない。みてねを使わないときは子どものアルバムに入れるかどうかの言葉にする。 */
 function words() { return state.settings.miteneEnabled ? {yes: '送る', no: '送らない'} : {yes: 'アルバムに入れる', no: '入れない'}; }
 /** タブごとに、そこに何が入っているかを1文で示す。 */
+/** 送る候補のタブの名前。送り方とみてねの有無で変わる。 */
+function candidatesName(): string { return !state.settings.miteneEnabled ? 'アルバムに入れる' : state.settings.sendMode === 'automatic' ? '送信待ち' : '送る候補'; }
 function tabNote(f: string): string {
  const s = state.settings, faces = !!s.people.length;
  if(f === 'candidates') return !s.miteneEnabled ? `${faces ? '子どもが写っている写真と、' : ''}自分で選んだ写真です。「写真」アプリの子どものアルバムに入れます。`
   : s.sendMode === 'automatic' ? `${faces ? '子どもが写っている写真と、' : ''}自分で選んだ写真です。次の同期で、みてねに自動で送ります。`
   : `${faces ? '子どもが写っている写真と、' : ''}自分で選んだ写真です。チェックして、みてねに送ります。`;
- if(f === 'others') return `${!s.miteneEnabled ? 'アルバムに入れない' : 'みてねに送らない'}写真です。${faces ? '子どもが写っていない写真、顔認識の結果を待っている写真と、' : ''}自分で外した写真が入ります。${s.miteneEnabled ? '送りたい写真は「送る」を押すと送る候補に移ります。' : ''}`;
+ if(f === 'others') return `${!s.miteneEnabled ? 'アルバムに入れない' : 'みてねに送らない'}写真です。${faces ? '子どもが写っていない写真と、' : ''}自分で外した写真が入ります。${s.miteneEnabled ? '送りたい写真は「送る」を押すと送る候補に移ります。' : ''}`;
+ if(f === 'waiting') return `「写真」アプリで顔の解析が終わっていない写真です。解析が終わると、顔認識の更新で「${candidatesName()}」か「${words().no}」に分けます。急ぐときは「${words().yes}」を押してください。`;
  if(f === 'sent') return 'みてねに送った写真です。';
  return '';
 }
@@ -145,7 +150,9 @@ function photosView() {
  const count = (f: string) => state.photos.filter(p => matches(p, f)).length;
  // タブは状態で分け、どの写真もどれか1つに入る。要確認・自動送信設定前の写真は、やることとしてタブの上に出す。
  const tabs: [string,string][] = !s.miteneEnabled ? [['candidates','アルバムに入れる'],['others','入れない'], ...(count('sent') ? [['sent','送信済み'] as [string,string]] : [])]
-  : [['candidates', s.sendMode === 'automatic' ? '送信待ち' : '送る候補'],['others','送らない'],['sent','送信済み']];
+  : [['candidates', candidatesName()],['others','送らない'],['sent','送信済み']];
+ // 顔認識の結果待ちは送るかどうかがまだ決まっていないので、ある間だけ別のタブにする。
+ if(count('waiting')) tabs.splice(1, 0, ['waiting','顔認識待ち']);
  const views: Record<string, string> = {older: 'みてね自動送信設定前の写真', uncertain: '送信できたか確認が必要な写真', all: 'すべての写真'};
  // 要確認・設定前の一覧は、片付いたり設定が変わったりして0枚になったら、通常のタブに戻す。
  if(!tabs.some(([id]) => id === filter) && (!views[filter] || (filter !== 'all' && !count(filter)))) filter = tabs[0][0];
