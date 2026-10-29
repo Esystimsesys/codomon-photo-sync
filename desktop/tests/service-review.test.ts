@@ -410,3 +410,15 @@ test('history, notifications and older history keep only the first line of a net
     finally { reopened.close(); }
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
+test('a regular sync checks again from a week before the last sync, or further back to a failed period', async () => {
+  const f = await fixture();
+  const ranges: string[][] = [];
+  try {
+    f.connections.syncCodmon = async (_s, _session, start, end) => { ranges.push([start, end]); return { photos: [], posts: [], errors: [] }; };
+    f.store.set('lastSync', new Date(2026, 9, 28, 21, 0).toISOString());
+    await f.service.sync(undefined, undefined, new Date(2026, 9, 29, 17, 30));
+    f.store.set('lastSync', new Date(2026, 9, 28, 21, 0).toISOString()); f.store.set('pendingSync', { start: '2026-09-01', end: '2026-09-30' });
+    await f.service.sync(undefined, undefined, new Date(2026, 9, 29, 21, 0));
+    assert.deepEqual(ranges, [['2026-10-21', '2026-10-29'], ['2026-09-01', '2026-10-29']]);
+  } finally { await f.close(); }
+});

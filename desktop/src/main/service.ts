@@ -68,11 +68,12 @@ export class Service {
       const settings=this.store.settings();
       const end=endDate||dayNow(now);
       const last=this.store.get<string>('lastSync');
-      const recent=new Date(now);recent.setDate(recent.getDate()-30);
       const pending=this.store.get<{start:string;end:string}>('pendingSync');
-      const overlap = last ? new Date(last) : null;
-      if(overlap) overlap.setDate(overlap.getDate()-1);
-      const catchup = overlap && Number.isFinite(overlap.getTime()) && dayNow(overlap)<dayNow(recent) ? dayNow(overlap) : dayNow(recent);
+      // 前回の同期の1週間前から確かめ直す。記録の日付が届いた日よりさかのぼった例は、2023年からの全記録で見つかっていない。
+      const overlap=new Date(last ?? now);
+      if(!Number.isFinite(overlap.getTime()))overlap.setTime(now.getTime());
+      overlap.setDate(overlap.getDate()-7);
+      const catchup=dayNow(overlap);
       // 開始日の指定がない初回は、今月からさかのぼり、記録のない月が1年続いたところで止める。
       const backfill=!startDate&&!last&&!settings.initialStartDate;
       const requestedStart=startDate || (last?catchup:settings.initialStartDate||EARLIEST_DAY);
