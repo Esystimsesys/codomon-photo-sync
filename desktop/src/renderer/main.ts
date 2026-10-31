@@ -288,7 +288,7 @@ function settingsFromData(fd: FormData): {settings?: Settings; error?: string} {
  for(const k of ['faceMinPx','faceMinRatio','faceMainRatio','faceMaxPeople'] as const) settings[k] = Number(fd.get(k));
  const times = (key: 'syncTime' | 'faceTime') => fd.getAll(key).map(String);
  const syncTimes = times('syncTime'), faceTimes = times('faceTime');
- if(syncTimes.length > 2) return {error:'同期の時刻は2つまでです。'};
+ if(syncTimes.length > DAILY_SYNC_LIMIT) return {error:`同期の時刻は${DAILY_SYNC_LIMIT}つまでです。`};
  for(const [label, values] of [['同期の時刻', syncTimes], ['顔認識の更新時刻', faceTimes]] as const) {
   if(values.some(v => !/^([01]\d|2[0-3]):[0-5]\d$/.test(v))) return {error:`${label}に空の欄があります。時刻を入れるか、×で消してください。`};
   if(new Set(values).size !== values.length) return {error:`${label}に同じ時刻が2つあります。`};

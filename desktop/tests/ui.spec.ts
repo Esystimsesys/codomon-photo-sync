@@ -363,3 +363,11 @@ test('photo tabs group by state: to send, waiting for faces, not sent, and sent,
  await expect(page.locator('.photo-card')).toHaveCount(1);
  await expect(page.locator('.photo-card .photo-status')).toHaveText('送信済み');
 });
+test('three sync times can be saved, and a fourth cannot be added', async ({page}) => {
+ await nativeFixture(page,true); await page.goto('/'); await page.getByRole('button', {name:'設定',exact:true}).click();
+ await page.locator('[data-add-time="sync"]').click();
+ await page.locator('[data-time-list="sync"] input').last().fill('06:00');
+ await expect.poll(() => page.evaluate(() => (window as unknown as {lastAction?:{settings?:{syncTimes:string[]}}}).lastAction?.settings?.syncTimes?.join(', '))).toBe('06:00, 17:30, 21:00');
+ await expect(page.locator('#settings-save-state')).toHaveText('設定は保存済みです');
+ await expect(page.locator('[data-add-time="sync"]')).toBeDisabled();
+});
