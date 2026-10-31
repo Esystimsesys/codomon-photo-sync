@@ -33,7 +33,7 @@ async function fixture(overrides: Partial<Settings> = {}) {
       uploads.push(photos.map(p => p.id)); callback.beforeSend(photos.map(p => p.id)); callback.onSent(photos.map(p => p.id));
     },
   };
-  const service = new Service(store, vault, connections, { changed: () => {}, notify: message => messages.push(message) });
+  const service = new Service(store, vault, connections, { changed: () => {}, notify: message => messages.push(message), random: () => 0 });
   return { root, archive, store, files, service, connections, vault, uploads, messages, close: async () => { store.close(); await rm(root, { recursive: true, force: true }); } };
 }
 
@@ -288,7 +288,7 @@ test('daily acquisition quota covers manual and scheduled work, survives restart
     await f.service.sync(undefined,undefined,day);
     await f.service.sync('2026-01-01','2026-01-02',day);
     await f.service.sync(undefined,undefined,day);
-    const restarted=new Service(f.store,f.vault,f.connections,{changed:()=>{},notify:()=>{}});
+    const restarted=new Service(f.store,f.vault,f.connections,{changed:()=>{},notify:()=>{},random:()=>0});
     await assert.rejects(restarted.sync(undefined,undefined,day),/1日3回/);
     f.store.saveSettings({...f.store.settings(),syncTimes:['11:00','19:00']});
     restarted.analyze=async()=>{faces++;};
@@ -422,5 +422,21 @@ test('a regular sync checks again from a week before the last sync, or further b
     f.store.set('lastSync', new Date(2026, 10, 5).toISOString()); f.store.set('pendingSync', null);
     await f.service.sync(undefined, undefined, new Date(2026, 9, 30, 17, 30));
     assert.deepEqual(ranges, [['2026-10-21', '2026-10-29'], ['2026-09-01', '2026-10-29'], ['2026-10-23', '2026-10-30']], 'a clock set back still starts no later than today');
+  } finally { await f.close(); }
+});
+test('a scheduled sync waits a few random minutes after the set time, drawn once per slot', async () => {
+  const f = await fixture({ miteneEnabled: false });
+  let calls = 0, draws = 0;
+  try {
+    f.connections.syncCodmon = async () => { calls++; return { photos: [], posts: [], errors: [] }; };
+    f.store.saveSettings({ ...f.store.settings(), autoSync: true, syncTimes: ['17:30'], faceTimes: [] });
+    const service = (random: number) => new Service(f.store, f.vault, f.connections, { changed: () => {}, notify: () => {}, random: () => { draws++; return random; } });
+    for (const minute of [30, 31, 32, 33]) await service(0.99).scheduled(new Date(2026, 9, 30, 17, minute));
+    assert.equal(calls, 0, 'waits 4 minutes');
+    assert.equal(draws, 1, 'a restart keeps the drawn wait');
+    await service(0).scheduled(new Date(2026, 9, 30, 17, 34));
+    assert.equal(calls, 1);
+    await service(0).scheduled(new Date(2026, 9, 31, 17, 30));
+    assert.equal(calls, 2, 'the next day draws again');
   } finally { await f.close(); }
 });

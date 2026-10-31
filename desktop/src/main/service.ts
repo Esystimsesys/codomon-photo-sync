@@ -33,9 +33,11 @@ export function personPhotos(photos:Photo[],faces:FaceResult[],person:Person,cou
 export const EARLIEST_DAY='2000-01-01';
 export function dayNow(now=new Date()):string { return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`; }
 export function safeError(e:unknown):string { return errorLine(e instanceof Error?e.message:'処理に失敗しました').replace(/https?:\/\/[^\s)）]+/g,'[接続先]').slice(0,1000); }
+/** Scheduled syncs start within this many minutes of the set time. */
+const SYNC_SPREAD_MINUTES=5;
 export class Service {
   busy=false; progress=''; update:Snapshot['update']=null;
-  constructor(readonly store:Store,readonly vault:Vault,readonly connectors:Connections,readonly options:{version?:string;executablePath?:string;changed:()=>void;notify:(message:string)=>void;demo?:boolean;validation?:boolean}){}
+  constructor(readonly store:Store,readonly vault:Vault,readonly connectors:Connections,readonly options:{version?:string;executablePath?:string;changed:()=>void;notify:(message:string)=>void;demo?:boolean;validation?:boolean;random?:()=>number}){}
   snapshot():Snapshot { return {settings:this.store.settings(),photos:this.store.photos(),posts:this.store.posts(),jobs:this.store.jobs(),busy:this.busy,progress:this.progress,codmonConnected:this.vault.has('codmon')&&!this.store.get('codmonNeedsLogin'),miteneConnected:this.vault.has('mitene')&&!this.store.get('miteneNeedsLogin'),platform:process.platform,version:this.options.version??'',demo:!!this.options.demo,validation:!!this.options.validation,update:this.update}; }
   changed():void{this.options.changed();}
   setProgress=(message:string)=>{this.progress=message;this.changed();};
@@ -156,13 +158,23 @@ export class Service {
     this.setProgress(`${photos.length}枚をみてねへ送信しました${longNote}`);
     return longNote;
   }
+  /**
+   * The minute of the day a sync slot starts. Each slot waits 0-4 minutes at random, so installs do not all reach コドモン in the same minute.
+   * The wait is kept for the slot, so a restart does not draw it again.
+   */
+  syncDue(slot:string,time:string):number{
+    const start=Number(time.slice(0,2))*60+Number(time.slice(3));
+    let delay=this.store.get<{slot:string;minutes:number}>('syncDelay');
+    if(delay?.slot!==slot){delay={slot,minutes:Math.min(Math.floor((this.options.random??Math.random)()*SYNC_SPREAD_MINUTES),1439-start)};this.store.set('syncDelay',delay);}
+    return start+delay.minutes;
+  }
   async scheduled(now=new Date()):Promise<void>{
     const s=this.store.settings();if(this.busy||!s.setupComplete||!s.autoSync||this.options.demo||this.options.validation)return;
     const date=dayNow(now);const minute=now.getHours()*60+now.getMinutes();
     // One catch-up after sleep rather than firing every missed slot at once. Attempts are separate from last success.
     const latest=(times:string[])=>times.filter(t=>Number(t.slice(0,2))*60+Number(t.slice(3))<=minute).at(-1);
     const syncSlot=latest(s.syncTimes),faceSlot=latest(s.faceTimes);
-    if(syncSlot&&this.store.get<string>('syncAttempt')!==`${date} ${syncSlot}`){
+    if(syncSlot&&this.store.get<string>('syncAttempt')!==`${date} ${syncSlot}`&&minute>=this.syncDue(`${date} ${syncSlot}`,syncSlot)){
       this.store.set('syncAttempt',`${date} ${syncSlot}`);
       if(this.syncQuota(now).count<DAILY_SYNC_LIMIT){await this.sync(undefined,undefined,now);return;}
     }
