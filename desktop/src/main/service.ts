@@ -70,8 +70,9 @@ export class Service {
       const last=this.store.get<string>('lastSync');
       const pending=this.store.get<{start:string;end:string}>('pendingSync');
       // 前回の同期の1週間前から確かめ直す。記録の日付が届いた日よりさかのぼった例は、2023年からの全記録で見つかっていない。
+      // 時計を戻して前回の同期が先の日時になっていても、今日より後から始めない。
       const overlap=new Date(last ?? now);
-      if(!Number.isFinite(overlap.getTime()))overlap.setTime(now.getTime());
+      if(!Number.isFinite(overlap.getTime())||overlap>now)overlap.setTime(now.getTime());
       overlap.setDate(overlap.getDate()-7);
       const catchup=dayNow(overlap);
       // 開始日の指定がない初回は、今月からさかのぼり、記録のない月が1年続いたところで止める。

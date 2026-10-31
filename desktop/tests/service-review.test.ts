@@ -419,6 +419,8 @@ test('a regular sync checks again from a week before the last sync, or further b
     await f.service.sync(undefined, undefined, new Date(2026, 9, 29, 17, 30));
     f.store.set('lastSync', new Date(2026, 9, 28, 21, 0).toISOString()); f.store.set('pendingSync', { start: '2026-09-01', end: '2026-09-30' });
     await f.service.sync(undefined, undefined, new Date(2026, 9, 29, 21, 0));
-    assert.deepEqual(ranges, [['2026-10-21', '2026-10-29'], ['2026-09-01', '2026-10-29']]);
+    f.store.set('lastSync', new Date(2026, 10, 5).toISOString()); f.store.set('pendingSync', null);
+    await f.service.sync(undefined, undefined, new Date(2026, 9, 30, 17, 30));
+    assert.deepEqual(ranges, [['2026-10-21', '2026-10-29'], ['2026-09-01', '2026-10-29'], ['2026-10-23', '2026-10-30']], 'a clock set back still starts no later than today');
   } finally { await f.close(); }
 });
