@@ -178,7 +178,7 @@ function syncFixture(store: Store, ranges: string[][]): Service {
     syncCodmon: async (_settings, _session, start, end) => { ranges.push([start, end]); return { photos: [], posts: [], errors: [] }; },
   };
   return new Service(store, { has: () => true, get: () => ({ cookies: [], origins: [] }), put: () => {} }, connectors,
-    { changed: () => {}, notify: () => {} });
+    { changed: () => {}, notify: () => {}, random: () => 0 });
 }
 
 test('incremental acquisition catches up beyond thirty days after a long offline period', async () => {

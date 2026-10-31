@@ -1563,7 +1563,8 @@ dialog {
 /* 時刻は横に並べ、行ごとのラベルは読み上げ用にだけ残す。 */
 .time-rows { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .time-row { display: flex; align-items: center; gap: 2px; border: 1px solid #dce0d6; border-radius: 8px; background: #fff; padding: 2px 4px 2px 2px; }
-.time-row .field { margin: 0; }
+.time-row .field { margin: 0; display: flex; align-items: center; }
+.time-suffix { font-size: 13px; color: var(--muted); padding-right: 4px; white-space: nowrap; }
 .time-row .field input { border: 0; padding: 7px 8px; width: auto; }
 .icon-button { border: 0; background: none; color: var(--muted); font-size: 16px; line-height: 1; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; }
 .icon-button:hover { background: var(--cream); color: #465442; }
