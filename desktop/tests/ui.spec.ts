@@ -371,3 +371,33 @@ test('three sync times can be saved, and a fourth cannot be added', async ({page
  await expect(page.locator('#settings-save-state')).toHaveText('設定は保存済みです');
  await expect(page.locator('[data-add-time="sync"]')).toBeDisabled();
 });
+test('growth records overlay height and weight in one chart, fold chest and head away, and filter by child and fiscal year', async ({page}) => {
+ await page.goto('/'); await page.getByRole('button', {name:'成長記録', exact:true}).click();
+ await expect(page.getByRole('heading', {name:'成長記録', level:1})).toBeVisible();
+ await expect(page.locator('.growth-main h3')).toHaveText('身長と体重');
+ await expect(page.locator('.growth-main svg path')).toHaveCount(2);
+ await expect(page.locator('.growth-more')).not.toHaveAttribute('open');
+ await expect(page.locator('.growth-more .growth-chart').first()).toBeHidden();
+ await page.locator('.growth-more summary').click();
+ await expect(page.locator('.growth-more .growth-chart h3')).toHaveText([/^胸囲/, /^頭囲/]);
+ await expect(page.locator('.growth-more svg')).toHaveCount(2);
+ await expect(page.locator('.growth-table').last().locator('tbody tr')).toHaveCount(31);
+ await expect(page.locator('.growth-table').last().locator('tbody tr').first().locator('th')).toHaveText('2026年10月');
+ await page.locator('[data-growth-year]').selectOption('2025');
+ await expect(page.locator('.growth-table').last().locator('tbody tr')).toHaveCount(12);
+ await expect(page.locator('.growth-more')).toHaveJSProperty('open', true);
+ await page.getByRole('button', {name:'はると'}).click();
+ await expect(page.locator('[data-growth-year]')).toHaveValue('');
+ await expect(page.locator('.growth-main')).toContainText('91.5 cm');
+ const plot = page.locator('.growth-main svg');
+ await plot.focus(); await page.keyboard.press('ArrowLeft');
+ await expect(page.locator('.growth-main .growth-tip')).toHaveText(/^2026年9月　身長 \d+\.\d cm・体重 \d+\.\d kg$/);
+});
+test('the save folder opens from its field in settings, and nowhere else', async ({page}) => {
+ await nativeFixture(page, true);
+ await page.goto('/');
+ await expect(page.locator('[data-action="openArchive"]')).toHaveCount(0);
+ await page.getByRole('button', {name:'設定', exact:true}).click();
+ await page.getByRole('button', {name:'保存先を開く'}).click();
+ await expect.poll(() => page.evaluate(() => (window as unknown as {lastAction?:{type:string}}).lastAction?.type)).toBe('openArchive');
+});

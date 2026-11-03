@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Service, dayNow, type Connections, type Vault } from '../src/main/service';
@@ -438,5 +438,29 @@ test('a scheduled sync waits a few random minutes after the set time, drawn once
     assert.equal(calls, 1);
     await service(0).scheduled(new Date(2026, 9, 31, 17, 30));
     assert.equal(calls, 2, 'the next day draws again');
+  } finally { await f.close(); }
+});
+test('growth records start from the oldest record once, then follow the sync period; failures do not hold back the sync', async () => {
+  const f = await fixture({ miteneEnabled: false });
+  const from: (string | undefined)[] = [];
+  try {
+    f.store.ingest([], [{ id: 'old', date: '2023-01-16', kind: 'お知らせ', title: '', body: '', path: '', attachments: [] }]);
+    let fail = true;
+    f.connections.syncCodmon = async (_s, _session, _start, _end, options) => {
+      from.push(options.growthFrom);
+      return { photos: [], posts: [], errors: [], growths: fail
+        ? { periods: [], errors: ['さくらの成長記録（2024年度）: HTTP 500'] }
+        : { periods: [{ child: 'さくら', start: '2026-04-01', end: '2027-03-31', records: [{ id: 'さくら:1', child: 'さくら', date: '2026-10-15', height: 102, weight: 16.4, chest: null, head: null }] }], errors: [] } };
+    };
+    f.store.set('lastSync', new Date(2026, 9, 28, 21).toISOString());
+    await assert.rejects(f.service.sync(undefined, undefined, new Date(2026, 9, 29, 17, 30)), /成長記録（2024年度）/);
+    assert.ok(new Date(f.store.get<string>('lastSync')!).getTime() > new Date(2026, 9, 28, 21).getTime(), 'photos and records still count as synced');
+    fail = false;
+    await f.service.sync(undefined, undefined, new Date(2026, 9, 29, 21));
+    await f.service.sync(undefined, undefined, new Date(2026, 9, 30, 17, 30));
+    assert.deepEqual(from.slice(0, 2), ['2023-01-16', '2023-01-16'], 'the first full fetch is retried until it succeeds');
+    assert.match(String(from[2]), /^2026-10-2\d$/);
+    assert.deepEqual(f.store.growths().map(g => g.height), [102]);
+    assert.match(await readFile(join(f.archive, '成長記録', 'さくら.csv'), 'utf8'), /2026-10,102,16.4,,/);
   } finally { await f.close(); }
 });

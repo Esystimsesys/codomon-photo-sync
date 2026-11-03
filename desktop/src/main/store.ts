@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { autoSending } from '../shared/send';
 import { DAILY_SYNC_LIMIT } from '../shared/limits';
 import { errorLine } from './errors';
-import type { ArchivePhoto, ArchivePost, Decision, FaceResult, Job, Person, Photo, Settings, TransferFile, UploadState } from '../shared/types';
+import type { ArchivePhoto, ArchivePost, Decision, FaceResult, Growth, GrowthPeriod, Job, Person, Photo, Settings, TransferFile, UploadState } from '../shared/types';
 
 export function defaults(home = homedir()): Settings {
   return { saveRoot: join(home, 'Pictures/codomon'), album: 'コドモン', people: [],
@@ -69,6 +69,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS photos_filename ON photos(filename);
       CREATE TABLE IF NOT EXISTS posts(id TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS ledger(filename TEXT PRIMARY KEY, state TEXT NOT NULL, at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS growths(id TEXT PRIMARY KEY, child TEXT NOT NULL, date TEXT NOT NULL, height REAL, weight REAL, chest REAL, head REAL);
       CREATE TABLE IF NOT EXISTS jobs(id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, startedAt TEXT NOT NULL, endedAt TEXT, status TEXT NOT NULL, message TEXT NOT NULL);
     `);
     // 届いた日の列がない古いデータベースには足す。既存の写真は空のままで、判定には表示日を使う。
@@ -165,6 +166,15 @@ export class Store {
     });
   }
   upsertPosts(posts: ArchivePost[]): void { const q = this.db.prepare('INSERT INTO posts VALUES(?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value'); for (const p of posts) q.run(p.id,JSON.stringify(p)); }
+  growths(): Growth[] { return this.db.prepare('SELECT id, child, date, height, weight, chest, head FROM growths ORDER BY child, date, id').all() as unknown as Growth[]; }
+  /** Replaces each fetched period, so a record the facility corrected or deleted is reflected. */
+  replaceGrowths(periods: GrowthPeriod[]): void {
+    this.transaction(() => { for (const p of periods) {
+      this.db.prepare('DELETE FROM growths WHERE child=? AND date BETWEEN ? AND ?').run(p.child, p.start, p.end);
+      const insert = this.db.prepare('INSERT OR REPLACE INTO growths(id, child, date, height, weight, chest, head) VALUES(?,?,?,?,?,?,?)');
+      for (const g of p.records) insert.run(g.id, g.child, g.date, g.height, g.weight, g.chest, g.head);
+    } });
+  }
   ingest(photos: ArchivePhoto[], posts: ArchivePost[]): void { this.transaction(()=>{ this.upsertPhotos(photos); this.upsertPosts(posts); }); }
   seedFilenames(names: string[], state: 'sent' | 'skipped' = 'sent'): void {
     const now = new Date().toISOString();

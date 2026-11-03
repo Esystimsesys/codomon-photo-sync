@@ -7,10 +7,11 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { gunzipSync } from 'node:zlib';
 import piexif from 'piexifjs';
-import type { ArchivePhoto, ArchivePost, ArchiveVideo, SyncResult, FaceAnalysis, FaceResult, Person, Settings } from '../shared/types';
+import type { ArchivePhoto, ArchivePost, ArchiveVideo, SyncResult, FaceAnalysis, FaceResult, Person, Settings, Growth, GrowthPeriod } from '../shared/types';
 import { personAlbum } from './store';
 import { isVideo } from '../shared/media';
 import { errorLine } from './errors';
+import { fileSafe } from './growth-files';
 
 export type Session = Awaited<ReturnType<BrowserContext['storageState']>>;
 export interface ConnectorOptions {
@@ -25,6 +26,8 @@ export interface ConnectorOptions {
   requestIntervalMs?: number;
   /** Turns the joined MPEG-TS segments into an MP4. Defaults to macOS avconvert; tests replace it. */
   convertVideo?: (source: string, output: string) => Promise<void>;
+  /** Growth records are fetched for the fiscal years from this day. Defaults to the oldest record fetched in the same sync. */
+  growthFrom?: string;
   /** Called after an expired コドモン login was renewed, with the expiry of the old and new refresh tokens when they carry one. */
   onCodmonRefresh?: (expiry: { before: string | null; after: string | null }) => void;
 }
@@ -519,7 +522,56 @@ export async function syncCodmonRequest(settings: Settings, request: BrowserCont
         } catch (e) { result.errors.push(`${date} 記録保存: ${errorText(e)}`); }
       }
     } }
+    const oldest = result.posts.map(p => p.date).filter(d => normalizeDate(d) === d).sort()[0];
+    result.growths = await syncGrowths(settings, request, children, options.growthFrom ?? oldest ?? startDate, endDate, interval);
     return result;
+}
+/** The fiscal years (April to March) covering `from` to `to`, the period the コドモン page asks growth records for. */
+export function fiscalYears(from: string, to: string): [string, string][] {
+  const year = (day: string) => Number(day.slice(0, 4)) - (Number(day.slice(5, 7)) < 4 ? 1 : 0);
+  const out: [string, string][] = [];
+  for (let y = year(from); y <= year(to); y++) out.push([`${y}-04-01`, `${y + 1}-03-31`]);
+  return out;
+}
+function measure(value: unknown): number | null {
+  const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+/** One growth record; null when it has no date or no measurement. */
+export function parseGrowth(child: string, item: Item): Growth | null {
+  const date = normalizeDate(item?.record_date);
+  const [height, weight, chest, head] = [item?.height, item?.weight, item?.chest, item?.head].map(measure);
+  if (!date || [height, weight, chest, head].every(v => v === null)) return null;
+  return { id: `${child}:${item.id ?? date}`, child, date, height, weight, chest, head };
+}
+/**
+ * Fetches each child's growth records by fiscal year, as the コドモン page does, and keeps each response as it came.
+ * A child may have one member id per facility, so all of them are asked together.
+ */
+export async function syncGrowths(settings: Settings, request: Pick<BrowserContext['request'], 'get'>, children: Map<string, string>, from: string, to: string, interval = 500): Promise<NonNullable<SyncResult['growths']>> {
+  const ids = new Map<string, string[]>();
+  for (const [member, child] of children) ids.set(child, [...(ids.get(child) ?? []), member]);
+  const periods: GrowthPeriod[] = [], errors: string[] = [];
+  // 子どもの情報が取れないと誰の記録か分からないので、取り込まずに次の同期でやり直す。
+  if (!ids.size) return { periods, errors: ['子どもの情報を取得できないため、成長記録を取り込めませんでした'] };
+  let requested = false;
+  for (const [child, members] of ids) for (const [start, end] of fiscalYears(from, to)) {
+    if (requested && interval) await new Promise(resolve => setTimeout(resolve, interval));
+    requested = true;
+    const query = new URLSearchParams({ search_start_record_date: start, search_end_record_date: end, __env__: 'myapp' });
+    for (const member of members) query.append('relation_id[]', member);
+    try {
+      const data = await consumeResponse(await request.get(`${API}/member_growths/?${query}`), async r => {
+        if (r.status() !== 200) throw new Error(`HTTP ${r.status()}`);
+        return (await r.json())?.data;
+      });
+      if (!Array.isArray(data)) throw new Error('応答の形式が変わっています');
+      const records = data.map(item => parseGrowth(child, item)).filter((g): g is Growth => !!g);
+      if (data.length) await atomicWrite(path.join(settings.saveRoot, '成長記録', '元データ', `${fileSafe(child)}-${start.slice(0, 4)}年度.json`), JSON.stringify(data, null, 2));
+      periods.push({ child, start, end, records });
+    } catch (e) { errors.push(`${child}の成長記録（${start.slice(0, 4)}年度）: ${errorText(e)}`); }
+  }
+  return { periods, errors };
 }
 /** member_id → the child's name. Names only label records, so a failure here never stops archiving. */
 export async function childNames(request: Pick<BrowserContext['request'], 'get'>): Promise<Map<string, string>> {

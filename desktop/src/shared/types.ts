@@ -52,7 +52,15 @@ export interface ArchivePost {
   /** この記録に付いていた写真・動画の id。別の記録と共有された写真も含む。以前の取り込みにはない（写真の `postId` でたどる）。 */
   photos?: string[];
 }
-export interface SyncResult { photos: ArchivePhoto[]; posts: ArchivePost[]; errors: string[]; }
+/** コドモンの成長記録の1回分。測っていない項目は null。 */
+export interface Growth { id: string; child: string; date: string; height: number | null; weight: number | null; chest: number | null; head: number | null; }
+/** 子ども1人・年度1つ分の成長記録。この期間の記録は、取り込むたびにこれで置き換える（園での修正・削除を反映するため）。 */
+export interface GrowthPeriod { child: string; start: string; end: string; records: Growth[]; }
+export interface SyncResult {
+  photos: ArchivePhoto[]; posts: ArchivePost[]; errors: string[];
+  /** 成長記録。失敗しても写真・記録の取り込みのやり直しにはしないので、エラーは別に持つ。 */
+  growths?: { periods: GrowthPeriod[]; errors: string[] };
+}
 export interface FaceResult { filename: string; person: string; selected: boolean; reason: string; }
 export interface FaceAnalysis {
   faces: FaceResult[];
@@ -61,7 +69,7 @@ export interface FaceAnalysis {
 }
 export interface Job { id: number; kind: string; startedAt: string; endedAt: string | null; status: 'running' | 'success' | 'error'; message: string; }
 export interface Snapshot {
-  settings: Settings; photos: Photo[]; posts: ArchivePost[]; jobs: Job[];
+  settings: Settings; photos: Photo[]; posts: ArchivePost[]; jobs: Job[]; growths: Growth[];
   busy: boolean; progress: string; codmonConnected: boolean; miteneConnected: boolean;
   platform: string; demo: boolean;
   /** このアプリのバージョン（package.json の version）。 */

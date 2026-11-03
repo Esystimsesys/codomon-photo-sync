@@ -7,6 +7,7 @@ import { beforeAutoSend } from '../shared/send';
 import { isVideo } from '../shared/media';
 import { DAILY_SYNC_LIMIT } from '../shared/limits';
 import { errorLine } from './errors';
+import { writeGrowthFiles } from './growth-files';
 export interface Vault { has(provider:string): boolean; get(provider:string): Session; put(provider:string,value:Session):void; }
 export interface Connections {
   manualLogin(provider:'codmon'|'mitene',options:ConnectorOptions):Promise<Session>;
@@ -38,7 +39,7 @@ const SYNC_SPREAD_MINUTES=5;
 export class Service {
   busy=false; progress=''; update:Snapshot['update']=null;
   constructor(readonly store:Store,readonly vault:Vault,readonly connectors:Connections,readonly options:{version?:string;executablePath?:string;changed:()=>void;notify:(message:string)=>void;demo?:boolean;validation?:boolean;random?:()=>number}){}
-  snapshot():Snapshot { return {settings:this.store.settings(),photos:this.store.photos(),posts:this.store.posts(),jobs:this.store.jobs(),busy:this.busy,progress:this.progress,codmonConnected:this.vault.has('codmon')&&!this.store.get('codmonNeedsLogin'),miteneConnected:this.vault.has('mitene')&&!this.store.get('miteneNeedsLogin'),platform:process.platform,version:this.options.version??'',demo:!!this.options.demo,validation:!!this.options.validation,update:this.update}; }
+  snapshot():Snapshot { return {settings:this.store.settings(),photos:this.store.photos(),posts:this.store.posts(),jobs:this.store.jobs(),growths:this.store.growths(),busy:this.busy,progress:this.progress,codmonConnected:this.vault.has('codmon')&&!this.store.get('codmonNeedsLogin'),miteneConnected:this.vault.has('mitene')&&!this.store.get('miteneNeedsLogin'),platform:process.platform,version:this.options.version??'',demo:!!this.options.demo,validation:!!this.options.validation,update:this.update}; }
   changed():void{this.options.changed();}
   setProgress=(message:string)=>{this.progress=message;this.changed();};
   session(provider:string):Session{try{return this.vault.get(provider);}catch(e){this.store.set(provider+'NeedsLogin',true);throw e;}}
@@ -92,7 +93,9 @@ export class Service {
       let result:SyncResult,renewed='';
       // Keep when the login was renewed and the token expiries, to see whether renewing extends the login.
       const onCodmonRefresh=(expiry:{before:string|null;after:string|null})=>{renewed='（コドモンのログインを自動で更新しました）';this.store.set('codmonRefresh',{at:new Date().toISOString(),...expiry});};
-      try{result=await this.connectors.syncCodmon(settings,session,start,until,{...this.connectorOptions('codmon'),onCodmonRefresh,...(backfill?{stopAfterEmptyMonths:12,...(pending?{fetchAllFrom:pending.start}:{})}:{})});}
+      // 成長記録は、初めては園の記録のいちばん古い日（入園の頃）から、その後は同期の期間の年度だけを取る。
+      const growthFrom=this.store.get<boolean>('growthFetched')?start:this.store.posts().map(p=>p.date).filter(validDay).sort()[0];
+      try{result=await this.connectors.syncCodmon(settings,session,start,until,{...this.connectorOptions('codmon'),onCodmonRefresh,...(growthFrom?{growthFrom}:{}),...(backfill?{stopAfterEmptyMonths:12,...(pending?{fetchAllFrom:pending.start}:{})}:{})});}
       catch(e){
         // Stopped at the login check: give the reserved attempt back, so a new login can sync the same day.
         if(e instanceof Error&&e.name==='CodmonAccessError')this.store.set('codmonDailyQuota',quota);
@@ -101,6 +104,12 @@ export class Service {
       this.store.ingest(result.photos,result.posts);
       if(!result.errors.length){if(!startDate&&!endDate)this.store.set('lastSync',new Date().toISOString());this.store.set('pendingSync',null);}
       const errors=[...result.errors];
+      if(result.growths){
+        this.store.replaceGrowths(result.growths.periods);
+        try{await writeGrowthFiles(settings.saveRoot,this.store.growths(),new Set(result.growths.periods.map(p=>p.child)));}catch(e){errors.push(`成長記録のファイル：${safeError(e)}`);}
+        errors.push(...result.growths.errors);
+        if(!result.growths.errors.length)this.store.set('growthFetched',true);
+      }
       let analyzed=true;
       try{errors.push(...await this.analyzeInternal());}catch(e){analyzed=false;errors.push(safeError(e));}
       // Per-photo acquisition/import warnings never block already selected photos. Failed face analysis does.
