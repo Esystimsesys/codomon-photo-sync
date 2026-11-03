@@ -393,3 +393,11 @@ test('growth records overlay height and weight in one chart, fold chest and head
  await plot.focus(); await page.keyboard.press('ArrowLeft');
  await expect(page.locator('.growth-main .growth-tip')).toHaveText(/^2026年9月　身長 \d+\.\d cm・体重 \d+\.\d kg$/);
 });
+test('the save folder opens from its field in settings, and nowhere else', async ({page}) => {
+ await nativeFixture(page, true);
+ await page.goto('/');
+ await expect(page.locator('[data-action="openArchive"]')).toHaveCount(0);
+ await page.getByRole('button', {name:'設定', exact:true}).click();
+ await page.getByRole('button', {name:'保存先を開く'}).click();
+ await expect.poll(() => page.evaluate(() => (window as unknown as {lastAction?:{type:string}}).lastAction?.type)).toBe('openArchive');
+});

@@ -167,6 +167,10 @@ button {
   font-size: 12px;
   margin: 9px 0;
 }
+.sidebar-bottom .last-sync {
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+}
 .sidebar-bottom .app-version {
   font-size: 11px;
   margin-top: 14px;
@@ -183,17 +187,6 @@ main {
   margin-left: 232px;
   width: calc(100% - 232px);
   min-width: 0;
-}
-.topbar {
-  height: 77px;
-  padding: 0 46px;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 12px;
-  letter-spacing: 0.06em;
 }
 .content {
   max-width: 1200px;
@@ -1110,9 +1103,6 @@ dialog p:not(.eyebrow) {
   .content {
     padding: 30px;
   }
-  .topbar {
-    padding: 0 30px;
-  }
   .hero-art {
     width: 150px;
   }
@@ -1192,14 +1182,6 @@ dialog p:not(.eyebrow) {
   .content {
     padding: 25px 18px;
   }
-  .topbar {
-    height: 57px;
-    padding: 0 18px;
-    font-size: 11px;
-  }
-  .topbar .button {
-    font-size: 11px;
-  }
   .heading {
     gap: 12px;
   }
@@ -1261,7 +1243,7 @@ dialog p:not(.eyebrow) {
   }
   .path-field {
     flex-wrap: wrap;
-    gap: 0;
+    gap: 0 8px;
   }
   .path-field .field {
     flex-basis: 100%;
