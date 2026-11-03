@@ -1576,3 +1576,41 @@ dialog {
 .button-row + .helper { margin-top: 10px; }
 .transfer-hint { margin-top: 10px; }
 .transfer-hint p { margin: 0 0 8px; }
+
+/* 成長記録 */
+.growth-year { display: inline-flex; align-items: center; gap: 8px; margin: 4px 0 18px; color: var(--muted); font-size: 13px; }
+.growth-year select { font: inherit; color: #293b34; padding: 6px 10px; border: 1px solid #dce0d6; border-radius: 8px; background: #fff; }
+.growth-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.growth-chart { border: 1px solid var(--line); background: #fffefa; border-radius: 12px; padding: 16px 18px 10px; min-width: 0; }
+.growth-chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+.growth-chart-head h3 { font-size: 15px; margin: 0; }
+.growth-chart-head h3 small, .growth-chart-head span small { color: var(--muted); font-weight: normal; font-size: 12px; }
+.growth-now { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; column-gap: 16px; }
+.growth-now span { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.growth-now > small { color: var(--muted); font-size: 12px; }
+.growth-chart-head span small { margin-left: 6px; }
+.growth-key { display: inline-block; width: 14px; height: 2px; border-radius: 1px; margin-right: 6px; vertical-align: middle; }
+.growth-main { margin-bottom: 16px; }
+.growth-main .growth-chart-head h3 { font-size: 16px; }
+.growth-main .growth-plot { min-height: 260px; }
+.growth-charts .growth-plot { min-height: 180px; }
+.growth-more { margin: 0 0 8px; }
+.growth-more summary { cursor: pointer; width: fit-content; padding: 6px 2px; font-weight: 600; font-size: 14px; color: #293b34; }
+.growth-more summary small { margin-left: 8px; color: var(--muted); font-weight: normal; font-size: 12px; }
+.growth-more summary:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; border-radius: 4px; }
+.growth-more[open] summary { margin-bottom: 10px; }
+.growth-more .growth-table { margin-top: 16px; }
+.growth-none { margin: 24px 0; }
+.growth-plot { position: relative; }
+.growth-plot svg { display: block; overflow: visible; }
+.growth-plot svg:focus-visible { outline: 2px solid var(--green); outline-offset: 4px; border-radius: 4px; }
+.growth-grid { stroke: var(--line); stroke-width: 1; }
+.growth-axis { fill: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.growth-cross { stroke: #9aa396; stroke-width: 1; }
+.growth-tip { position: absolute; transform: translateX(-50%); pointer-events: none; white-space: nowrap; background: #293b34; color: #fff; font-size: 12px; padding: 4px 8px; border-radius: 6px; font-variant-numeric: tabular-nums; }
+.growth-table-title { font-size: 16px; margin: 28px 0 10px; }
+.growth-table { width: 100%; border-collapse: collapse; background: #fffefa; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; font-variant-numeric: tabular-nums; }
+.growth-table th, .growth-table td { padding: 8px 14px; text-align: right; border-bottom: 1px solid var(--line); }
+.growth-table th:first-child { text-align: left; font-weight: normal; }
+.growth-table thead th { color: var(--muted); font-weight: normal; font-size: 12px; background: var(--cream); }
+.growth-table tbody tr:last-child > * { border-bottom: 0; }

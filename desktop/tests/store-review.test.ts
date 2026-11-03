@@ -291,3 +291,11 @@ test('schedule settings normalize times, reject duplicates and limit acquisition
   assert.deepEqual(validateSettings(legacy).syncTimes,['17:30','21:00']);
   const store=new Store(':memory:');try{store.set('settings',legacy);assert.deepEqual(store.settings().faceTimes,['07:00','13:00','19:00','22:00']);}finally{store.close();}
 });
+test('growth records are replaced period by period, so corrections and deletions at the facility carry over', () => {
+  const store = new Store(':memory:');
+  const g = (id: string, date: string, height: number) => ({ id, child: 'さくら', date, height, weight: null, chest: null, head: null });
+  store.replaceGrowths([{ child: 'さくら', start: '2025-04-01', end: '2026-03-31', records: [g('さくら:1', '2025-05-15', 98)] }, { child: 'さくら', start: '2026-04-01', end: '2027-03-31', records: [g('さくら:2', '2026-05-15', 101), g('さくら:3', '2026-06-15', 102)] }]);
+  store.replaceGrowths([{ child: 'さくら', start: '2026-04-01', end: '2027-03-31', records: [g('さくら:2', '2026-05-15', 101.2)] }]);
+  assert.deepEqual(store.growths().map(r => [r.date, r.height]), [['2025-05-15', 98], ['2026-05-15', 101.2]]);
+  store.close();
+});

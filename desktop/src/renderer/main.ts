@@ -3,6 +3,7 @@ import { createDemo, demoDocument, demoImage } from './demo';
 import './style.css';
 import { icon, type IconName } from './icons';
 import { recordEntry, recordExcerpt, type RecordEntry } from './records';
+import { growthView, bindGrowth } from './growth';
 import { beforeAutoSend } from '../shared/send';
 import { isVideo } from '../shared/media';
 import { DAILY_SYNC_LIMIT } from '../shared/limits';
@@ -11,7 +12,7 @@ const browserDemo = !window.desktop;
 const api: DesktopApi = window.desktop ?? createDemo();
 const app = document.querySelector<HTMLDivElement>('#app')!;
 let state: Snapshot;
-let page: 'overview' | 'photos' | 'records' | 'settings' = 'overview';
+let page: 'overview' | 'photos' | 'records' | 'growth' | 'settings' = 'overview';
 // 空なら、その設定の最初のタブを開く。
 let filter = '';
 let selected = new Set<string>();
@@ -88,7 +89,7 @@ function render() {
  const inSetup = setup || !state.settings.setupComplete;
  const pending = state.photos.filter(p => available(p) && candidate(p) && !beforeAutoSend(p, state.settings));
  const last = lastSync();
- app.innerHTML = `<div class="shell"><aside class="sidebar"><a class="brand" href="#" aria-label="おむかえフォト ホーム"><img class="brand-mark" src="${brandIcon}" alt="" width="44" height="44"><span>おむかえフォト</span></a>${inSetup ? '' : `<nav aria-label="メインメニュー">${nav('overview','home','ホーム')}${nav('photos','photos','写真')}${nav('records','records','園の記録')}${nav('settings','settings','設定')}</nav>`}${inSetup ? '' : `<div class="sidebar-bottom"><span class="status-dot ${state.settings.autoSync ? '' : 'off'}"></span>${state.settings.autoSync ? '自動同期オン' : '自動同期オフ'}<small>ウィンドウを閉じても、バックグラウンドで動き続けます。</small>${state.version ? `<small class="app-version">バージョン ${escape(state.version)}</small>` : ''}</div>`}</aside><main><header class="topbar"><span>${inSetup ? 'はじめの設定' : `前回の同期：${last || 'まだありません'}`}</span><button class="button small" data-action="openArchive">保存先を開く ${icon('external')}</button></header>${browserDemo || state.demo ? '<div class="demo-banner">体験用のデモです。写真と記録は架空のもので、コドモン・みてねには接続しません。</div>' : state.validation ? '<div class="demo-banner validation-banner">動作確認用です。この画面から外部サービスへの接続やMacの「写真」アプリの変更は行いません。</div>' : ''}<div class="alerts">${error ? `<div class="alert error" role="alert"><span>${escape(error)}</span><button class="text-button" data-dismiss="error">閉じる</button></div>` : ''}${notice ? `<div class="alert success" role="status"><span>${escape(notice)}</span><button class="text-button" data-dismiss="notice">閉じる</button></div>` : ''}${state.busy || working ? `<div class="alert progress" role="status"><span class="spinner"></span>${escape(state.progress || '処理しています…')}</div>` : ''}</div><div class="content">${inSetup ? settingsView(true) : page === 'overview' ? overview(pending, last) : page === 'photos' ? photosView() : page === 'records' ? recordsView() : settingsView(false)}</div></main></div><dialog id="confirm-dialog" aria-labelledby="confirm-title"></dialog><dialog id="photo-dialog" class="photo-dialog" aria-labelledby="photo-title"></dialog>`;
+ app.innerHTML = `<div class="shell"><aside class="sidebar"><a class="brand" href="#" aria-label="おむかえフォト ホーム"><img class="brand-mark" src="${brandIcon}" alt="" width="44" height="44"><span>おむかえフォト</span></a>${inSetup ? '' : `<nav aria-label="メインメニュー">${nav('overview','home','ホーム')}${nav('photos','photos','写真')}${nav('records','records','園の記録')}${nav('growth','growth','成長記録')}${nav('settings','settings','設定')}</nav>`}${inSetup ? '' : `<div class="sidebar-bottom"><span class="status-dot ${state.settings.autoSync ? '' : 'off'}"></span>${state.settings.autoSync ? '自動同期オン' : '自動同期オフ'}<small>ウィンドウを閉じても、バックグラウンドで動き続けます。</small>${state.version ? `<small class="app-version">バージョン ${escape(state.version)}</small>` : ''}</div>`}</aside><main><header class="topbar"><span>${inSetup ? 'はじめの設定' : `前回の同期：${last || 'まだありません'}`}</span><button class="button small" data-action="openArchive">保存先を開く ${icon('external')}</button></header>${browserDemo || state.demo ? '<div class="demo-banner">体験用のデモです。写真と記録は架空のもので、コドモン・みてねには接続しません。</div>' : state.validation ? '<div class="demo-banner validation-banner">動作確認用です。この画面から外部サービスへの接続やMacの「写真」アプリの変更は行いません。</div>' : ''}<div class="alerts">${error ? `<div class="alert error" role="alert"><span>${escape(error)}</span><button class="text-button" data-dismiss="error">閉じる</button></div>` : ''}${notice ? `<div class="alert success" role="status"><span>${escape(notice)}</span><button class="text-button" data-dismiss="notice">閉じる</button></div>` : ''}${state.busy || working ? `<div class="alert progress" role="status"><span class="spinner"></span>${escape(state.progress || '処理しています…')}</div>` : ''}</div><div class="content">${inSetup ? settingsView(true) : page === 'overview' ? overview(pending, last) : page === 'photos' ? photosView() : page === 'records' ? recordsView() : page === 'growth' ? growthView(state.growths ?? []) : settingsView(false)}</div></main></div><dialog id="confirm-dialog" aria-labelledby="confirm-title"></dialog><dialog id="photo-dialog" class="photo-dialog" aria-labelledby="photo-title"></dialog>`;
  bind();
  const newForm = document.querySelector<HTMLFormElement>('#settings-form');
  if(draft && newForm) restoreForm(newForm, draft);
@@ -389,6 +390,7 @@ async function confirmDialog(title: string, description: string, confirm: string
 }
 async function act(action: Action, done: string) { const result = await run(action, done); if(result) { selected.clear(); render(); } }
 function bind() {
+ bindGrowth(app, render);
  app.querySelectorAll<HTMLElement>('[data-preview]').forEach(b => b.addEventListener('click', () => {
   const photo = state.photos.find(p => p.id === b.dataset.preview)!, postId = b.dataset.previewPost ?? '';
   // 開いた画面に並んでいる順で送る。ホームは最近の写真の続きとして、すべての写真をたどれる。

@@ -1,11 +1,22 @@
-import type { DesktopApi, Snapshot, Action } from '../shared/types';
+import type { DesktopApi, Snapshot, Action, Growth } from '../shared/types';
 declare const __APP_VERSION__: string;
 // 再生期限は1週間後にして、デモの動画がいつ開いても期限内に見えるようにする。
 const weekLater = () => { const d = new Date(); d.setDate(d.getDate() + 7); return `${d.toLocaleDateString('sv-SE')} 12:00:00`; };
+/** 架空の成長記録。毎月の身長・体重と、年2回（4月・10月）の胸囲・頭囲。 */
+function demoGrowths(): Growth[] {
+  const out: Growth[] = [];
+  for (const [child, height, weight, chest, head] of [['さくら', 92, 13.2, 50, 48.4], ['はると', 78, 10.1, 46, 46.2]] as const) for (let i = 0; i <= 30; i++) {
+    const y = 2024 + Math.floor((i + 3) / 12), m = (i + 3) % 12 + 1, date = `${y}-${String(m).padStart(2, '0')}-15`;
+    const twice = m === 4 || m === 10, round = (v: number) => Math.round(v * 10) / 10;
+    out.push({ id: `${child}:${date}`, child, date, height: round(height + i * 0.45 + (i % 3) * 0.1), weight: round(weight + i * 0.13 + (i % 4 === 1 ? 0.2 : 0)), chest: twice ? round(chest + i * 0.15) : null, head: twice ? round(head + i * 0.06) : null });
+  }
+  return out;
+}
 const defaults: Snapshot = {
   settings: { saveRoot: '/Users/demo/Pictures/おむかえフォト', album: 'コドモン', people: [{name: 'さくら', album: ''}, {name: 'はると', album: ''}], photosLibrary: '', importPhotos: true, sendMode: 'review', miteneEnabled: true, miteneScope: '家族みんなに公開', autoSync: true, launchAtLogin: false, initialStartDate: '', faceMinPx: 50, faceMinRatio: .08, faceMainRatio: .6, faceMaxPeople: 5, autoSendFrom: '', syncTimes: ['17:30','21:00'], faceTimes: ['07:00','13:00','19:00','22:00'], setupComplete: true },
   photos: Array.from({length: 8}, (_, i) => ({ id: `demo-${i}`, filename: i === 2 ? 'sample-2.mp4' : `sample-${i}.jpg`, path: '', date: `2026-10-0${i < 4 ? 2 : 1}`, title: i < 4 ? '秋の色をさがしに' : 'お部屋でつくって遊ぼう', postId: i < 4 ? 'post-1' : 'post-2', decision: i === 7 ? 'exclude' : 'auto', autoSelected: i < 4, reason: i < 2 ? 'さくらが写っています' : i < 4 ? 'さくら・はるとが写っています' : i === 4 ? 'はると：顔が小さめです（38px・6人）' : i === 5 ? '顔認識の結果待ち' : '対象の人物が見つかりません', uploadState: i === 0 ? 'sent' : i === 6 ? 'uncertain' : 'pending', imported: true, importError: null, sentAt: i === 0 ? '2026-10-02T08:00:00Z' : null })),
   posts: [{id: 'post-1', date: '2026-10-02', kind: '活動記録', title: '秋の色をさがしに', body: '園庭で色づいた葉っぱを見つけました。\nみんなで拾った葉っぱを並べて、色や形の違いを楽しんでいます。', path: '', attachments: [], children: ['さくら', 'はると'], photos: ['sample-0.jpg', 'sample-1.jpg', 'sample-2.mp4', 'sample-3.jpg']}, {id: 'post-2', date: '2026-10-01', kind: 'comments', title: '', body: JSON.stringify({memo: '積み木を組み合わせて、大きな街ができました。\nこれは表示確認のための架空の記録です。', meal: '主食　完食\n主菜　おかわり', tempratures: [{temprature: '36.8', temprature_time: '14:20:00'}], sleepings: '12:30〜14:40', mood_morning: '良', mood_afternoon: '良', evacuations: []}), path: '', attachments: [], children: ['はると']}, {id: 'post-3', date: '2026-10-01', kind: 'topics', title: '運動会のダンスのお手本', body: 'お家でも練習してみてください。これは表示確認のための架空の記録です。', path: '', attachments: ['/Users/demo/Pictures/おむかえフォト/2026-10-01/添付/1_topics_3-0123456789ab-運動会のおしらせ.pdf'], children: ['はると'], videos: [{name: 'sample.mov', size: 130_000_000, expires: weekLater()}]}],
+  growths: demoGrowths(),
   jobs: [{id: 1, kind: '写真・記録を取得', startedAt: '2026-10-02T08:30:00Z', endedAt: '2026-10-02T08:30:10Z', status: 'success', message: '写真8枚と記録3件を保存しました'}], busy: false, progress: '', codmonConnected: true, miteneConnected: false, platform: 'darwin', version: __APP_VERSION__, demo: true, update: null,
 };
 export function createDemo(): DesktopApi {

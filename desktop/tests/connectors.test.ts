@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import piexif from 'piexifjs';
 import { normalizeDate, monthlyIntervals, entryDate, postedDate, timelinePhotos, recordBody, photoFilename, codmonUrl, stampExif, atomicWrite, fetchTimeline, readFaceResults, readAnalyzedFilenames, judgeFace, confirmedUploadCount, appleScriptString, syncCodmonRequest } from '../src/main/connectors';
-import { CodmonAccessError, refreshCodmonSession, withCodmonTokens, tokenExpiry } from '../src/main/connectors';
+import { CodmonAccessError, refreshCodmonSession, withCodmonTokens, tokenExpiry, fiscalYears, parseGrowth, syncGrowths } from '../src/main/connectors';
+import { growthCsv, fileSafe } from '../src/main/growth-files';
 import type { Settings } from '../src/shared/types';
 const settings = { album:'園',people:[{name:'対象',album:''}],faceMinPx:25,faceMinRatio:0.6,faceMainRatio:0.8,faceMaxPeople:5 } as unknown as Settings;
 
@@ -556,4 +557,37 @@ test('token expiry is read from a JWT and left empty for other tokens', () => {
   const jwt = ['e30', Buffer.from(JSON.stringify({ exp: 1798761600 })).toString('base64url'), 'sig'].join('.');
   assert.equal(tokenExpiry(jwt), '2027-01-01T00:00:00.000Z');
   assert.equal(tokenExpiry('opaque-token'), null);
+});
+
+test('growth records are asked by fiscal year for every member id of a child, and kept as they came', async () => {
+  assert.deepEqual(fiscalYears('2023-01-16', '2024-04-02'), [['2022-04-01','2023-03-31'],['2023-04-01','2024-03-31'],['2024-04-01','2025-03-31']]);
+  assert.deepEqual(parseGrowth('さくら', { id: 9, record_date: '2026-10-15', height: '102.0', weight: 16.4, chest: '', head: null }),
+    { id: 'さくら:9', child: 'さくら', date: '2026-10-15', height: 102, weight: 16.4, chest: null, head: null });
+  assert.equal(parseGrowth('さくら', { record_date: '2026-10-15', height: '' }), null, 'nothing measured');
+  const root = await mkdtemp(path.join(tmpdir(), 'codomon-growth-'));
+  const asked: URL[] = [];
+  const fake = { get: async (url: string) => {
+    const u = new URL(url); asked.push(u);
+    const year = u.searchParams.get('search_start_record_date')!.slice(0, 4);
+    const status = year === '2025' ? 500 : 200;
+    return { dispose: async () => {}, status: () => status, json: async () => ({ data: year === '2026' ? [{ id: 1, record_date: '2026-10-15', height: '102.0', weight: '16.4' }] : [] }) };
+  } } as any;
+  try {
+    const children = new Map([['101', 'さくら'], ['202', 'さくら']]);
+    const result = await syncGrowths({ ...settings, saveRoot: root }, fake, children, '2025-05-01', '2026-10-31', 0);
+    assert.deepEqual(asked.map(u => u.searchParams.getAll('relation_id[]')), [['101','202'], ['101','202']]);
+    assert.deepEqual(result.periods, [{ child: 'さくら', start: '2026-04-01', end: '2027-03-31', records: [{ id: 'さくら:1', child: 'さくら', date: '2026-10-15', height: 102, weight: 16.4, chest: null, head: null }] }]);
+    assert.deepEqual(result.errors, ['さくらの成長記録（2025年度）: HTTP 500']);
+    assert.deepEqual(JSON.parse(await readFile(path.join(root, '成長記録', '元データ', 'さくら-2026年度.json'), 'utf8')), [{ id: 1, record_date: '2026-10-15', height: '102.0', weight: '16.4' }]);
+    assert.deepEqual((await syncGrowths({ ...settings, saveRoot: root }, fake, new Map(), '2026-01-01', '2026-10-31', 0)).errors, ['子どもの情報を取得できないため、成長記録を取り込めませんでした']);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('the growth CSV lists one row per month, oldest first, with empty cells for what was not measured', () => {
+  const csv = growthCsv([
+    { id: 'a:2', child: 'a', date: '2026-10-15', height: 102.5, weight: 16.4, chest: 53, head: 49.8 },
+    { id: 'a:1', child: 'a', date: '2026-09-15', height: 102, weight: null, chest: null, head: null },
+  ]);
+  assert.equal(csv, '﻿月,身長（cm）,体重（kg）,胸囲（cm）,頭囲（cm）\n2026-09,102,,,\n2026-10,102.5,16.4,53,49.8\n');
+  assert.equal(fileSafe('さくら/はると:'), 'さくら_はると_');
 });
