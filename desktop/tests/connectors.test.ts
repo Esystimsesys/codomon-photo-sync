@@ -401,8 +401,18 @@ test('mitene forbidden page stops upload before marking sending; desktop UA matc
   let before = 0;
   const page = {goto:async()=>({status:()=>403}),url:()=> 'https://mitene.us/web/uploader',
     locator:()=>{assert.fail('must not look for the file input');}} as any;
-  await assert.rejects(uploadMitenePage(page,settings,[{id:'x',path:'/synthetic/x'}] as any,{beforeSend:()=>{before++;},onSent:()=>{}}),/HTTP 403/);
+  await assert.rejects(uploadMitenePage(page,settings,[{id:'x',path:'/synthetic/x'}] as any,{beforeSend:()=>{before++;},onSent:()=>{}}),/HTTP 403）。写真は送っていません$/);
   assert.equal(before,0);
+  // 20枚を送った後、次の20枚の画面で拒否されたら、送れた枚数と残りを示す。
+  let visits = 0; const sent: number[] = [];
+  const partial = {goto:async()=>({status:()=>++visits===1?200:403}),url:()=> 'https://mitene.us/web/uploader',
+    locator:()=>({waitFor:async()=>{},count:async()=>1,setInputFiles:async()=>{}}),innerText:async()=>'',
+    getByRole:()=>({waitFor:async()=>{},count:async()=>1,click:async()=>{}}),
+    waitForFunction:async()=>{}} as any;
+  const photos = Array.from({length:21},(_,i)=>({id:String(i),path:`/synthetic/${i}.jpeg`})) as any;
+  await assert.rejects(uploadMitenePage(partial,{...settings,miteneScope:'家族みんなに公開'},photos,{beforeSend:()=>{},onSent:(ids:string[])=>{sent.push(ids.length);}}),
+    /HTTP 403）。20枚は送信済みで、残りの1枚は送っていません$/);
+  assert.deepEqual(sent,[20]);
   const ua = desktopChromeUserAgent('153.0.8010.12');
   assert.match(ua,/ Chrome\/153\.0\.0\.0 Safari\/537\.36$/); assert.doesNotMatch(ua,/Headless/);
 });

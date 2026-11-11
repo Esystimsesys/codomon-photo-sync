@@ -295,9 +295,9 @@ async function contextFor(session: Session | undefined, options: ConnectorOption
   try { return { browser, context: await browser.newContext({ storageState: session, locale: 'ja-JP', ...(desktopUserAgent ? { userAgent: desktopChromeUserAgent(browser.version()) } : {}) }) }; }
   catch (e) { await browser.close(); throw e; }
 }
-export const MITENE_FORBIDDEN = 'みてねが自動での送信を受け付けていません（HTTP 403）。写真は送っていません';
-function assertMiteneAllowed(response: { status(): number } | null | undefined): void {
-  if (response?.status() === 403) throw new Error(MITENE_FORBIDDEN);
+export const MITENE_FORBIDDEN = 'みてねが自動での接続を受け付けていません（HTTP 403）';
+function assertMiteneAllowed(response: { status(): number } | null | undefined, note = ''): void {
+  if (response?.status() === 403) throw new Error(note ? `${MITENE_FORBIDDEN}。${note}` : MITENE_FORBIDDEN);
 }
 export async function manualLogin(provider: 'codmon' | 'mitene', options: ConnectorOptions = {}): Promise<Session> {
   const { browser, context } = await contextFor(undefined, options, false);
@@ -705,7 +705,9 @@ export async function uploadMitene(settings: Settings, session: Session, photos:
 export async function uploadMitenePage(page: Page, settings: Settings, photos: ArchivePhoto[], callbacks: UploadCallbacks, options: ConnectorOptions = {}): Promise<void> {
     for (let i = 0; i < photos.length; i += 20) {
       const chunk = photos.slice(i, i + 20);
-      assertMiteneAllowed(await page.goto(UPLOADER, { waitUntil: 'domcontentloaded', timeout: 60_000 }));
+      // 20枚ごとに送るので、途中で拒否されたら、それまでに送れた枚数を添える。
+      assertMiteneAllowed(await page.goto(UPLOADER, { waitUntil: 'domcontentloaded', timeout: 60_000 }),
+        i ? `${i}枚は送信済みで、残りの${photos.length - i}枚は送っていません` : '写真は送っていません');
       if (/\/web\/(login|otp)/.test(page.url())) throw new Error('みてねに再ログインしてください');
       const input = page.locator('input[type=file]');
       await input.waitFor({ state: 'attached', timeout: 30_000 });
