@@ -143,7 +143,9 @@ export class Service {
       if(s.importPhotos&&this.connectors.updatePersonAlbum){const photos=this.store.photos().filter(p=>p.imported);for(const person of s.people){try{await this.connectors.updatePersonAlbum(s,person,personPhotos(photos,faces,person,s.people.length));}catch(e){errors.push(s.people.length>1?`${person.name}のアルバム：${safeError(e)}`:safeError(e));}}}
     }
     if(s.miteneEnabled&&this.vault.has('mitene')&&this.connectors.refreshMiteneSession&&this.store.get<string>('miteneRefresh')!==dayNow()){
-      try{await this.connectors.refreshMiteneSession(this.session('mitene'),this.connectorOptions('mitene'));this.store.set('miteneRefresh',dayNow());}catch(e){errors.push(safeError(e));if(safeError(e).includes('再ログイン'))this.store.set('miteneNeedsLogin',true);}
+      try{await this.connectors.refreshMiteneSession(this.session('mitene'),this.connectorOptions('mitene'));this.store.set('miteneRefresh',dayNow());}catch(e){const error=safeError(e);errors.push(error);if(error.includes('再ログイン'))this.store.set('miteneNeedsLogin',true);
+        // 拒否されたら、その日は確認し直さない（拒否されている所へ1日に何度も問い合わせない）。
+        if(error.includes('HTTP 403'))this.store.set('miteneRefresh',dayNow());}
     }
     this.changed();return errors;
   }
