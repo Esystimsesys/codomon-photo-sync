@@ -58,7 +58,7 @@
 
 ## 手順
 
-通常の配布ビルドは GitHub Actions で作ります。タグを付けたコミットの中身だけから、Apple Silicon 版と Intel 版の両方を作るためです。手元でも同じ証明書を使ってビルドできます。
+通常の配布ビルドは GitHub Actions で、タグを付けたコミットの中身だけから Apple Silicon 版と Intel 版の両方を作ります。手元でも同じ証明書を使ってビルドできます。
 
 1. `desktop/package.json` の `version` を上げ、`main` にコミットして push する
 2. そのコミットにタグを付けて push する
@@ -74,9 +74,9 @@
 
 ### 署名用の証明書（初回だけ）
 
-「写真」アプリの操作と写真ライブラリの許可を更新後も引き継ぐため、自作のコード署名証明書を使います。macOS はこれらの許可を、アプリの指定要件（アプリIDと証明書）で覚えます（[Apple TN2206](https://developer.apple.com/library/archive/technotes/tn2206/_index.html)）。アドホック署名では指定要件がビルドごとに変わるため、更新のたびに許可が外れます。
+自作のコード署名証明書で署名します。macOS は「写真」アプリの操作と写真ライブラリの許可を、アプリの指定要件（アプリIDと証明書）で覚えるので（[Apple TN2206](https://developer.apple.com/library/archive/technotes/tn2206/_index.html)）、同じ証明書で署名した版では更新後も許可が引き継がれます。
 
-キーチェーンの確認は、この方法では避けられません。キーチェーンの項目は作成したアプリのパーティションIDを記録し、Team IDのない署名ではビルドごとに変わる `cdhash:` になるためです。Developer ID（Apple Developer Program）で署名すれば `teamid:` になり、確認は出なくなります。2026-10-15 に 0.1.0 から 0.1.1-test.1 へ入れ替えて、キーチェーンの確認が出ること、「写真」関係の許可が引き継がれることを実機で確かめました。
+キーチェーンの確認は更新ごとに出ます。キーチェーンの項目は作成したアプリのパーティションIDを記録し、Team IDのない署名ではビルドごとに変わる `cdhash:` になります。
 
 初回の起動を許可する手順は、Apple の公証を受けていないため、新しい版をダウンロードするたびに必要です。
 
@@ -86,7 +86,7 @@
 - GitHub の `release` 環境に `OMUKAE_SIGN_P12_BASE64`（`identity.p12` のBase64）と `OMUKAE_SIGN_PASSWORD`（`password.txt` の内容）を登録する。登録・変更はユーザーの許可を得て行う
 - `release` 環境の Deployment branches and tags は Selected branches and tags にし、種類を Tag、名前を `v*` にする。ブランチは許可しない。[GitHub の環境保護](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)で、署名用シークレットを配布用タグに限定する
 - プルリクエストと通常の手動実行は鍵を使わず、アドホック署名で試験する。タグのpushでは試験成功後、`release` 環境の専用ジョブで署名する
-- 配布用タグのpushを署名実行の承認として扱い、`release` 環境に署名前の追加承認（Required reviewers）は設定しない（2026-10-14 ユーザー指定）
+- `release` 環境に署名前の追加承認（Required reviewers）は設定しない。配布用タグのpushで署名まで進む
 - 署名時だけ一時キーチェーンを作ってキーチェーンの検索一覧に加え、署名後に一覧を元に戻して削除する（macOS 15 の `codesign` は、検索一覧にないキーチェーンの証明書を見つけられない）。ビルドの子プロセスにはP12やそのパスワードの環境変数を渡さない。システムの信頼設定は変更しない
 - 署名後、アプリIDと証明書が公開証明書に一致することを検証する。異なる鍵やアドホック署名の成果物は配布に進めない
 
@@ -105,7 +105,7 @@ npm run package:signed
 
 ### Intel 版
 
-手元に Intel の Mac がないため、Intel 版（`x64`）は GitHub Actions の Intel ランナーでの自動テストだけで確認して出します。試験、パッケージしたアプリの起動、同梱ブラウザの起動が通ることを条件にし、README の「制約と注意」にもその旨を書きます。
+Intel 版（`x64`）は GitHub Actions の Intel ランナーでの自動テストだけで確認して出します。試験、パッケージしたアプリの起動、同梱ブラウザの起動が通ることを条件にし、README の「制約と注意」にもその旨を書きます。
 
 ### 説明文
 

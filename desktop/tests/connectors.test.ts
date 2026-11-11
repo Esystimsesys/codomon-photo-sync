@@ -392,6 +392,19 @@ test('session refresh reads uploader only and stores session after logged-in val
   events.length = 0; url = 'https://mitene.us/web/uploader'; inputCount = 2;
   await assert.rejects(refreshMitenePage(page,{onSession:save}),/確認できません/);
   assert.deepEqual(events,['visit','wait']);
+  events.length = 0; inputCount = 1; page.goto = async()=>{events.push('visit');return {status:()=>403};};
+  await assert.rejects(refreshMitenePage(page,{onSession:save}),/HTTP 403/);
+  assert.deepEqual(events,['visit']);
+});
+test('mitene forbidden page stops upload before marking sending; desktop UA matches bundled major', async () => {
+  const { uploadMitenePage, desktopChromeUserAgent } = await import('../src/main/connectors');
+  let before = 0;
+  const page = {goto:async()=>({status:()=>403}),url:()=> 'https://mitene.us/web/uploader',
+    locator:()=>{assert.fail('must not look for the file input');}} as any;
+  await assert.rejects(uploadMitenePage(page,settings,[{id:'x',path:'/synthetic/x'}] as any,{beforeSend:()=>{before++;},onSent:()=>{}}),/HTTP 403/);
+  assert.equal(before,0);
+  const ua = desktopChromeUserAgent('153.0.8010.12');
+  assert.match(ua,/ Chrome\/153\.0\.0\.0 Safari\/537\.36$/); assert.doesNotMatch(ua,/Headless/);
 });
 
 function albumFixture(options: { incomplete?: boolean; renameFailure?: boolean; finalMismatch?: boolean; unchanged?: boolean } = {}) {

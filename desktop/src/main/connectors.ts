@@ -286,10 +286,18 @@ async function consumeResponse<T>(response: APIResponse, read: (response: APIRes
   try { return await read(response); }
   finally { await response.dispose(); }
 }
-async function contextFor(session: Session | undefined, options: ConnectorOptions, headless = true) {
+/** みてねは名乗りが HeadlessChrome のブラウザに 403 を返すため、みてねの確認と送信だけ、同梱の Chromium と同じ版の Chrome を名乗る。 */
+export function desktopChromeUserAgent(browserVersion: string): string {
+  return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${browserVersion.split('.')[0]}.0.0.0 Safari/537.36`;
+}
+async function contextFor(session: Session | undefined, options: ConnectorOptions, headless = true, desktopUserAgent = false) {
   const browser = await chromium.launch({ headless, executablePath: options.executablePath });
-  try { return { browser, context: await browser.newContext({ storageState: session, locale: 'ja-JP' }) }; }
+  try { return { browser, context: await browser.newContext({ storageState: session, locale: 'ja-JP', ...(desktopUserAgent ? { userAgent: desktopChromeUserAgent(browser.version()) } : {}) }) }; }
   catch (e) { await browser.close(); throw e; }
+}
+export const MITENE_FORBIDDEN = 'みてねが自動での送信を受け付けていません（HTTP 403）。写真は送っていません';
+function assertMiteneAllowed(response: { status(): number } | null | undefined): void {
+  if (response?.status() === 403) throw new Error(MITENE_FORBIDDEN);
 }
 export async function manualLogin(provider: 'codmon' | 'mitene', options: ConnectorOptions = {}): Promise<Session> {
   const { browser, context } = await contextFor(undefined, options, false);
@@ -688,7 +696,7 @@ export interface UploadCallbacks {
 }
 export async function uploadMitene(settings: Settings, session: Session, photos: ArchivePhoto[], callbacks: UploadCallbacks, options: ConnectorOptions = {}): Promise<void> {
   if (!photos.length) return;
-  const { browser, context } = await contextFor(session, options);
+  const { browser, context } = await contextFor(session, options, true, true);
   try {
     await uploadMitenePage(await context.newPage(), settings, photos, callbacks, options);
     await options.onSession?.(await context.storageState());
@@ -697,7 +705,7 @@ export async function uploadMitene(settings: Settings, session: Session, photos:
 export async function uploadMitenePage(page: Page, settings: Settings, photos: ArchivePhoto[], callbacks: UploadCallbacks, options: ConnectorOptions = {}): Promise<void> {
     for (let i = 0; i < photos.length; i += 20) {
       const chunk = photos.slice(i, i + 20);
-      await page.goto(UPLOADER, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      assertMiteneAllowed(await page.goto(UPLOADER, { waitUntil: 'domcontentloaded', timeout: 60_000 }));
       if (/\/web\/(login|otp)/.test(page.url())) throw new Error('みてねに再ログインしてください');
       const input = page.locator('input[type=file]');
       await input.waitFor({ state: 'attached', timeout: 30_000 });
@@ -773,13 +781,13 @@ export async function updatePersonAlbumWith(settings: Pick<Settings, 'album'>, p
 
 /** Refresh only the authenticated uploader page; never attach files or click submission. */
 export async function refreshMiteneSession(session: Session, options: ConnectorOptions = {}): Promise<Session> {
-  const { browser, context } = await contextFor(session, options);
+  const { browser, context } = await contextFor(session, options, true, true);
   try { return await refreshMitenePage(await context.newPage(), options); }
   finally { await browser.close(); }
 }
 export async function refreshMitenePage(page: Page, options: ConnectorOptions = {}): Promise<Session> {
   options.onProgress?.('みてねのログイン状態を確認しています');
-  await page.goto(UPLOADER, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  assertMiteneAllowed(await page.goto(UPLOADER, { waitUntil: 'domcontentloaded', timeout: 60_000 }));
   const url = new URL(page.url());
   if (url.protocol !== 'https:' || url.hostname !== 'mitene.us' || !/^\/web\/uploader\/?$/.test(url.pathname)) throw new Error('みてねに再ログインしてください');
   const input = page.locator('input[type=file]');
